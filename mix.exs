@@ -1,28 +1,33 @@
-defmodule Turxo.MixProject do
+defmodule TurxoRoot.MixProject do
   use Mix.Project
+
+  # Adapted from https://github.com/elixir-nx/nx/blob/main/mix.exs 
 
   def project do
     [
-      app: :turxo,
+      app: :turxo_root,
       version: "0.1.0",
-      elixir: "~> 1.18",
-      start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: [{:ecto_turxo, path: "ecto_turxo"}, {:turxo, path: "turxo"}],
+      aliases: [
+        setup: cmd("deps.get"),
+        compile: cmd("compile"),
+        test: cmd("test")
+      ]
     ]
   end
 
-  # Run "mix help compile.app" to learn about applications.
-  def application do
-    [
-      extra_applications: [:logger]
-    ]
-  end
+  defp cmd(command) do
+    ansi = IO.ANSI.enabled?()
+    base = ["--erl", "-elixir ansi_enabled #{ansi}", "-S", "mix", command]
 
-  # Run "mix help deps" to learn about dependencies.
-  defp deps do
-    [
-      # {:dep_from_hexpm, "~> 0.3.0"},
-      # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
-    ]
+    for app <- ~w(turxo ecto_turxo) do
+      fn args ->
+        {_, res} = System.cmd("elixir", base ++ args, into: IO.binstream(:stdio, :line), cd: app)
+
+        if res > 0 do
+          System.at_exit(fn _ -> exit({:shutdown, 1}) end)
+        end
+      end
+    end
   end
 end
