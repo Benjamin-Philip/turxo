@@ -24,3 +24,4 @@ turxo-*.tar
 
 # Rust binary artifacts
 /target/
+/priv/native/*
