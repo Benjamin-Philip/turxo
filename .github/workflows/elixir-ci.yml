@@ -1,4 +1,4 @@
- name: Elixir CI
+name: Elixir CI
 on:
   pull_request:
   push:
@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        lib: [turxo, ecto_turxo]    
+        lib: [turxo, ecto_turxo]   
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        lib: [turxo, ecto_turxo]    
+        lib: [turxo, ecto_turxo]   
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
