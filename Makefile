@@ -1,7 +1,30 @@
 # Makefile for helpers for CI and development
 
 .PHONY: check
-check: rust nix
+check: elixir-turxo elixir-ecto_turxo rust nix
+
+##########
+# Elixir #
+##########
+
+.PHONY: elixir-%
+elixir-%: elixir-%-check elixir-%-formatted  elixir-%-test  
+
+.PHONY: elixir-%-check
+elixir-%-check:
+	cd $* && mix compile --warnings-as-errors
+
+.PHONY: elixir-%-formatted
+elixir-%-formatted:
+	cd $* && mix format --check-formatted
+
+.PHONY: elixir-%-test
+elixir-%-test:
+	cd $* && mix test
+
+.PHONY: elixir-%-setup
+elixir-%-setup: 
+	cd $* && mix deps.get
 
 ########
 # Rust #

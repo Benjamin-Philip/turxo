@@ -1,0 +1,49 @@
+ name: Elixir CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  check:
+    name: Compiles without warning
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        lib: [turxo, ecto_turxo]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: nicknovitski/nix-develop@v1
+      - run: make elixir-${{ matrix.lib }}-setup
+      - run: make elixir-${{ matrix.lib }}-check
+
+  formatted:
+    name: Check Formatted
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        lib: [turxo, ecto_turxo]    
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: nicknovitski/nix-develop@v1
+      - run: make elixir-${{ matrix.lib }}-setup
+      - run: make elixir-${{ matrix.lib }}-formatted
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        lib: [turxo, ecto_turxo]    
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: nicknovitski/nix-develop@v1
+      - run: make elixir-${{ matrix.lib }}-setup
+      - run: make elixir-${{ matrix.lib }}-test
