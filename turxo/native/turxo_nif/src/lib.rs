@@ -36,7 +36,7 @@ impl Resource for ConnectionResource {
 // NIFs
 
 #[rustler::nif]
-fn build_db<'a>(env: Env<'a>, path: String) -> Reference<'a> {
+fn build_db<'a>(env: Env<'a>, db_path: String) -> Reference<'a> {
     let erl_ref = env.make_ref();
     let pid = env.pid();
     
@@ -44,10 +44,34 @@ fn build_db<'a>(env: Env<'a>, path: String) -> Reference<'a> {
     let owned_ref = owned_env.run(|env| erl_ref.in_env(env));
     
     runtime().spawn(async move {
-        let result = Builder::new_local(&path).build().await;
+        let result = Builder::new_local(&db_path).build().await;
 
         let ret = match result {
             Ok(db) => Ok(ResourceArc::new(DatabaseResource{db})),
+            Err(e) => Err(e.to_string())
+        };
+
+        let _ = owned_env.send_and_clear(&pid, |_env| {
+            (owned_ref, ret)
+        });
+    });
+
+    erl_ref
+}
+
+#[rustler::nif]
+fn connect_db<'a>(env: Env<'a>, db_resource: ResourceArc<DatabaseResource>) -> Reference<'a> {
+    let erl_ref = env.make_ref();
+    let pid = env.pid();
+    
+    let mut owned_env = OwnedEnv::new();
+    let owned_ref = owned_env.run(|env| erl_ref.in_env(env));
+    
+    runtime().spawn(async move {
+        let result = db_resource.db.connect();
+
+        let ret = match result {
+            Ok(conn) => Ok(ResourceArc::new(ConnectionResource{conn})),
             Err(e) => Err(e.to_string())
         };
 
