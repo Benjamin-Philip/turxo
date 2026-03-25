@@ -4,7 +4,8 @@ defmodule Turxo.NIF do
   @timeout 5_000
 
   def build_db(_path), do: nif_error()
-  def connect_db(_path), do: nif_error()
+  def connect_db(_db), do: nif_error()
+  def conn_execute(_conn, _sql, _params), do: nif_error()
   defp nif_error, do: :erlang.nif_error(:nif_not_loaded)
 
   def wrap(fun, args) do
