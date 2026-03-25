@@ -34,7 +34,7 @@ impl Resource for ConnectionResource {
 }
 
 #[rustler::nif]
-fn build_db<'a>(env: Env<'a>, db_path: String) -> Reference<'a> {
+fn db_open<'a>(env: Env<'a>, db_path: String) -> Reference<'a> {
     let erl_ref = env.make_ref();
     let pid = env.pid();
 
@@ -56,7 +56,7 @@ fn build_db<'a>(env: Env<'a>, db_path: String) -> Reference<'a> {
 }
 
 #[rustler::nif]
-fn connect_db<'a>(env: Env<'a>, db_resource: ResourceArc<DatabaseResource>) -> Reference<'a> {
+fn db_connect<'a>(env: Env<'a>, db_resource: ResourceArc<DatabaseResource>) -> Reference<'a> {
     let erl_ref = env.make_ref();
     let pid = env.pid();
 

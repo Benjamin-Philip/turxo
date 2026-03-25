@@ -3,9 +3,9 @@ defmodule Turxo.NIFTest do
 
   alias Turxo.NIF
 
-  describe "build_db/1" do
+  describe "db_open/1" do
     test "can build in memory" do
-      ref = NIF.build_db(":memory:")
+      ref = NIF.db_open(":memory:")
       assert is_reference(ref)
 
       assert_receive({^ref, {:ok, db}})
@@ -15,7 +15,7 @@ defmodule Turxo.NIFTest do
     @tag :tmp_dir
     test "can build a database file", %{tmp_dir: dir} do
       path = "#{dir}/test.db"
-      ref = NIF.build_db(path)
+      ref = NIF.db_open(path)
       assert is_reference(ref)
 
       assert_receive({^ref, {:ok, db}})
@@ -24,16 +24,16 @@ defmodule Turxo.NIFTest do
     end
 
     test "can safely handle invalid paths" do
-      ref = NIF.build_db("/invalid/path/")
+      ref = NIF.db_open("/invalid/path/")
       assert is_reference(ref)
 
       assert_receive({^ref, {:error, "I/O error (open): entity not found"}})
     end
   end
 
-  test "connect_db/1" do
-    {:ok, db} = NIF.wrap(:build_db, [":memory:"])
-    ref = NIF.connect_db(db)
+  test "db_connect/1" do
+    {:ok, db} = NIF.wrap(:db_open, [":memory:"])
+    ref = NIF.db_connect(db)
 
     assert_receive({^ref, {:ok, conn}})
     assert is_reference(conn)
@@ -41,8 +41,8 @@ defmodule Turxo.NIFTest do
 
   describe "conn_execute/3 correctly handles" do
     setup do
-      {:ok, db} = NIF.wrap(:build_db, [":memory:"])
-      {:ok, conn} = NIF.wrap(:connect_db, [db])
+      {:ok, db} = NIF.wrap(:db_open, [":memory:"])
+      {:ok, conn} = NIF.wrap(:db_connect, [db])
 
       {:ok, 0} =
         NIF.wrap(:conn_execute, [
@@ -99,15 +99,15 @@ defmodule Turxo.NIFTest do
   end
 
   describe "wrap/2 correctly wraps" do
-    test "build_db/1" do
-      assert {:ok, db} = NIF.wrap(:build_db, [":memory:"])
+    test "db_open/1" do
+      assert {:ok, db} = NIF.wrap(:db_open, [":memory:"])
       assert is_reference(db)
     end
 
-    test "connect_db/1" do
-      {:ok, db} = NIF.wrap(:build_db, [":memory:"])
+    test "db_connect/1" do
+      {:ok, db} = NIF.wrap(:db_open, [":memory:"])
 
-      assert {:ok, conn} = NIF.wrap(:connect_db, [db])
+      assert {:ok, conn} = NIF.wrap(:db_connect, [db])
       assert is_reference(conn)
     end
   end
