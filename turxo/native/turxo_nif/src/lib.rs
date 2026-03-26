@@ -1,4 +1,4 @@
-use rustler::{Atom, Env, NifUntaggedEnum, OwnedEnv, Reference, Resource, ResourceArc};
+use rustler::{Atom, Env, LocalPid, NifUntaggedEnum, OwnedEnv, Reference, Resource, ResourceArc};
 use std::sync::OnceLock;
 
 use tokio::runtime::Runtime;
@@ -35,21 +35,17 @@ impl Resource for ConnectionResource {
 
 #[rustler::nif]
 fn db_open<'a>(env: Env<'a>, db_path: String) -> Reference<'a> {
-    let erl_ref = env.make_ref();
-    let pid = env.pid();
-
-    let mut owned_env = OwnedEnv::new();
-    let owned_ref = owned_env.run(|env| erl_ref.in_env(env));
+    let (erl_ref, pid, owned_env, owned_ref) = setup_async_env(env);
 
     runtime().spawn(async move {
         let result = Builder::new_local(&db_path).build().await;
 
-        let ret = match result {
+        let result = match result {
             Ok(db) => Ok(ResourceArc::new(DatabaseResource { db })),
             Err(e) => Err(e.to_string()),
         };
 
-        let _ = owned_env.send_and_clear(&pid, |_env| (owned_ref, ret));
+        send_result(result, pid, owned_env, owned_ref);
     });
 
     erl_ref
@@ -57,21 +53,17 @@ fn db_open<'a>(env: Env<'a>, db_path: String) -> Reference<'a> {
 
 #[rustler::nif]
 fn db_connect<'a>(env: Env<'a>, db_resource: ResourceArc<DatabaseResource>) -> Reference<'a> {
-    let erl_ref = env.make_ref();
-    let pid = env.pid();
-
-    let mut owned_env = OwnedEnv::new();
-    let owned_ref = owned_env.run(|env| erl_ref.in_env(env));
+    let (erl_ref, pid, owned_env, owned_ref) = setup_async_env(env);
 
     runtime().spawn(async move {
         let result = db_resource.db.connect();
 
-        let ret = match result {
+        let result = match result {
             Ok(conn) => Ok(ResourceArc::new(ConnectionResource { conn })),
             Err(e) => Err(e.to_string()),
         };
 
-        let _ = owned_env.send_and_clear(&pid, |_env| (owned_ref, ret));
+        send_result(result, pid, owned_env, owned_ref);
     });
 
     erl_ref
@@ -129,11 +121,7 @@ fn conn_execute<'a>(
     sql: String,
     params: Params,
 ) -> Reference<'a> {
-    let erl_ref = env.make_ref();
-    let pid = env.pid();
-
-    let mut owned_env = OwnedEnv::new();
-    let owned_ref = owned_env.run(|env| erl_ref.in_env(env));
+    let (erl_ref, pid, owned_env, owned_ref) = setup_async_env(env);
 
     runtime().spawn(async move {
         let result = match params {
@@ -146,15 +134,32 @@ fn conn_execute<'a>(
             }
         };
 
-        let ret = match result {
-            Ok(result) => Ok(result),
-            Err(e) => Err(e.to_string()),
-        };
-
-        let _ = owned_env.send_and_clear(&pid, |_env| (owned_ref, ret));
+        let result = result.map_err(|e| e.to_string());
+        send_result::<u64>(result, pid, owned_env, owned_ref);
     });
 
     erl_ref
+}
+
+// Helpers
+
+fn setup_async_env<'a, 'b>(env: Env<'a>) -> (Reference<'a>, LocalPid, OwnedEnv, Reference<'b>) {
+    let erl_ref = env.make_ref();
+    let pid = env.pid();
+
+    let owned_env = OwnedEnv::new();
+    let owned_ref = owned_env.run(|env| erl_ref.in_env(env));
+
+    (erl_ref, pid, owned_env, owned_ref)
+}
+
+fn send_result<T: rustler::Encoder>(
+    result: Result<T, String>,
+    pid: LocalPid,
+    mut owned_env: OwnedEnv,
+    owned_ref: Reference<'_>,
+) {
+    let _ = owned_env.send_and_clear(&pid, |_env| (owned_ref, result));
 }
 
 fn on_load(_env: Env, _info: rustler::Term) -> bool {
