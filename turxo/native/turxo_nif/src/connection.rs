@@ -1,4 +1,4 @@
-use crate::statement::{Params, Value, params_atom_to_key};
+use crate::statement::{params_atom_to_key, Params, Value};
 use crate::utils::{runtime, send_result, setup_async_env};
 use rustler::{Env, Reference, Resource, ResourceArc};
 use turso::{Connection, Error as TursoError, Rows};
