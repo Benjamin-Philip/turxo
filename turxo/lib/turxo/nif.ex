@@ -6,6 +6,7 @@ defmodule Turxo.NIF do
   def db_open(_path), do: nif_error()
   def db_connect(_db), do: nif_error()
   def conn_execute(_conn, _sql, _params), do: nif_error()
+  def conn_query(_conn, _sql, _params), do: nif_error()
   defp nif_error, do: :erlang.nif_error(:nif_not_loaded)
 
   def wrap(fun, args) do

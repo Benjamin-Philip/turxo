@@ -3,7 +3,9 @@ use std::sync::OnceLock;
 
 use tokio::runtime::Runtime;
 
-use turso::{Builder, Connection, Database, Error as TursoError, IntoValue, Value as TursoValue};
+use turso::{
+    Builder, Connection, Database, Error as TursoError, IntoValue, Rows, Value as TursoValue,
+};
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
@@ -69,6 +71,8 @@ fn db_connect<'a>(env: Env<'a>, db_resource: ResourceArc<DatabaseResource>) -> R
     erl_ref
 }
 
+// Connection Execution
+
 #[derive(NifUntaggedEnum, Debug, Clone)]
 enum Params {
     Positional(Vec<Value>),
@@ -77,6 +81,7 @@ enum Params {
 
 #[derive(NifUntaggedEnum, Debug, Clone)]
 enum Value {
+    Null(Atom),
     Integer(i64),
     Real(f64),
     Text(String),
@@ -86,10 +91,23 @@ enum Value {
 impl IntoValue for Value {
     fn into_value(self) -> Result<TursoValue, TursoError> {
         match self {
+            Value::Null(_i) => Ok(TursoValue::Null),
             Value::Integer(i) => Ok(TursoValue::Integer(i)),
             Value::Real(f) => Ok(TursoValue::Real(f)),
             Value::Text(s) => Ok(TursoValue::Text(s)),
             Value::Blob(b) => Ok(TursoValue::Blob(b)),
+        }
+    }
+}
+
+impl Value {
+    fn new(value: TursoValue) -> Value {
+        match value {
+            TursoValue::Null => Value::Null(rustler::types::atom::nil()),
+            TursoValue::Integer(i) => Value::Integer(i),
+            TursoValue::Real(f) => Value::Real(f),
+            TursoValue::Text(s) => Value::Text(s),
+            TursoValue::Blob(b) => Value::Blob(b),
         }
     }
 }
@@ -139,6 +157,56 @@ fn conn_execute<'a>(
     });
 
     erl_ref
+}
+
+// Connection Queries
+
+#[rustler::nif]
+fn conn_query<'a>(
+    env: Env<'a>,
+    conn_resource: ResourceArc<ConnectionResource>,
+    sql: String,
+    params: Params,
+) -> Reference<'a> {
+    let (erl_ref, pid, owned_env, owned_ref) = setup_async_env(env);
+
+    runtime().spawn(async move {
+        let rows = match params {
+            Params::Positional(p) => conn_resource.conn.query(sql, p).await,
+            Params::Named(n) => {
+                conn_resource
+                    .conn
+                    .query(sql, params_atom_to_key(&owned_env, n))
+                    .await
+            }
+        };
+
+        let result = match rows {
+            Ok(rows) => decode_rows(rows).await.map_err(|e| e.to_string()),
+            Err(e) => Err(e.to_string()),
+        };
+
+        send_result(result, pid, owned_env, owned_ref);
+    });
+
+    erl_ref
+}
+
+async fn decode_rows(mut rows: Rows) -> Result<Vec<Vec<Value>>, TursoError> {
+    let count = rows.column_count();
+    let mut decoded = Vec::new();
+
+    while let Some(row) = rows.next().await? {
+        let mut decoded_row: Vec<Value> = Vec::new();
+
+        for idx in 0..count {
+            decoded_row.push(Value::new(row.get_value(idx).unwrap()));
+        }
+
+        decoded.push(decoded_row);
+    }
+
+    Ok(decoded)
 }
 
 // Helpers

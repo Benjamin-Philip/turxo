@@ -98,6 +98,72 @@ defmodule Turxo.NIFTest do
     end
   end
 
+  describe "conn_query/3 correctly handles" do
+    setup do
+      {:ok, db} = NIF.wrap(:db_open, [":memory:"])
+      {:ok, conn} = NIF.wrap(:db_connect, [db])
+
+      {:ok, 0} =
+        NIF.wrap(:conn_execute, [
+          conn,
+          "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)",
+          []
+        ])
+
+      data = [
+        ["Alice", "alice@example.com"],
+        ["Bob", nil],
+        ["Charlie", "charlie@example.com"]
+      ]
+
+      for pair <- data do
+        {:ok, 1} =
+          NIF.wrap(:conn_execute, [
+            conn,
+            "INSERT INTO users (name, email) VALUES (:name, :email)",
+            pair
+          ])
+      end
+
+      %{db: db, conn: conn, data: data}
+    end
+
+    test "no parameters", %{conn: conn, data: data} do
+      assert {:ok, [[3]]} = NIF.wrap(:conn_query, [conn, "SELECT COUNT(*) FROM users", []])
+      assert {:ok, ^data} = NIF.wrap(:conn_query, [conn, "SELECT name, email FROM users", []])
+    end
+
+    test "positional parameters", %{conn: conn} do
+      assert {:ok, [[1]]} =
+               NIF.wrap(:conn_query, [conn, "SELECT id FROM users WHERE name = (?1)", ["Alice"]])
+
+      assert {:ok, [[nil]]} =
+               NIF.wrap(:conn_query, [conn, "SELECT email FROM users WHERE name = (?1)", ["Bob"]])
+
+      assert {:ok, [["charlie@example.com"]]} =
+               NIF.wrap(:conn_query, [conn, "SELECT email FROM users WHERE id = (?1)", [3]])
+    end
+
+    test "named parameters", %{conn: conn} do
+      assert {:ok, [[1]]} =
+               NIF.wrap(:conn_query, [
+                 conn,
+                 "SELECT id FROM users WHERE name = (:name)",
+                 [name: "Alice"]
+               ])
+
+      assert {:ok, [[nil]]} =
+               NIF.wrap(:conn_query, [
+                 conn,
+                 "SELECT email FROM users WHERE name = (:name)",
+                 [name: "Bob"]
+               ])
+
+      assert {:ok, [["charlie@example.com"]]} =
+               NIF.wrap(:conn_query, [conn, "SELECT email FROM users WHERE id = (:id)", [id: 3]])
+    end
+  end
+
   describe "wrap/2 correctly wraps" do
     test "db_open/1" do
       assert {:ok, db} = NIF.wrap(:db_open, [":memory:"])
