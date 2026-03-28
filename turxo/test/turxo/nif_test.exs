@@ -43,6 +43,8 @@ defmodule Turxo.NIFTest do
     assert is_reference(db)
   end
 
+  # Database
+
   describe "db_open/1" do
     test "can build in memory" do
       ref = Unwrapped.db_open(":memory:")
@@ -70,6 +72,8 @@ defmodule Turxo.NIFTest do
     assert {:ok, conn} = NIF.db_connect(db)
     assert is_reference(conn)
   end
+
+  # Connection
 
   describe "conn_execute/3 correctly handles" do
     test "no parameters", %{conn: conn} do
@@ -152,6 +156,13 @@ defmodule Turxo.NIFTest do
     assert {:ok, stmt} = NIF.conn_prepare(conn, "SELECT id FROM users WHERE name = (?1)", true)
     assert is_reference(stmt)
   end
+
+  test "conn_transaction/1", %{conn: conn} do
+    {:ok, ref} = Turxo.NIF.conn_transaction(conn)
+    assert is_reference(ref)
+  end
+
+  # Statement
 
   test "stmt_execute/2", %{conn: conn} do
     # The conn execute and query functions test parameter handling

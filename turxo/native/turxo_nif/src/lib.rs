@@ -1,6 +1,7 @@
 mod connection;
 mod database;
 mod statement;
+mod transaction;
 mod utils;
 
 use utils::RUNTIME;

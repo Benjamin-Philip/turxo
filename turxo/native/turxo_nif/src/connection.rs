@@ -1,4 +1,5 @@
 use crate::statement::{params_atom_to_key, Params, StatementResource, Value};
+use crate::transaction::TransactionResource;
 use crate::utils::{runtime, send_result, setup_async_env};
 use rustler::{Env, Reference, Resource, ResourceArc};
 use tokio::sync::{Mutex, RwLock};
@@ -108,6 +109,31 @@ fn conn_prepare<'a>(
         };
 
         send_result::<ResourceArc<StatementResource>>(result, pid, owned_env, owned_ref);
+    });
+
+    erl_ref
+}
+
+// Transaction
+
+#[rustler::nif]
+fn conn_transaction<'a>(
+    env: Env<'a>,
+    conn_resource: ResourceArc<ConnectionResource>,
+) -> Reference<'a> {
+    let (erl_ref, pid, owned_env, owned_ref) = setup_async_env(env);
+
+    runtime().spawn(async move {
+        let mut conn = conn_resource.0.try_write().unwrap();
+
+        let tx_res = conn.transaction().await;
+
+        let result = match tx_res {
+            Ok(tx) => Ok(ResourceArc::new(TransactionResource { tx })),
+            Err(e) => Err(e.to_string()),
+        };
+
+        send_result::<ResourceArc<TransactionResource>>(result, pid, owned_env, owned_ref);
     });
 
     erl_ref
