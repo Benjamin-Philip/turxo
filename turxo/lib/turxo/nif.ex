@@ -2,7 +2,12 @@ defmodule Turxo.NIF do
   use Rustler, otp_app: :turxo, crate: :turxo_nif
 
   db = [db_open: [:path], db_connect: [:db]]
-  conn = [conn_execute: [:conn, :sql, :params], conn_query: [:conn, :sql, :params]]
+
+  conn = [
+    conn_execute: [:conn, :sql, :params],
+    conn_query: [:conn, :sql, :params],
+    conn_prepare: [:conn, :sql, :cached?]
+  ]
 
   nifs = db ++ conn
 

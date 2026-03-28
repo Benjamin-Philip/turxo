@@ -1,5 +1,16 @@
-use rustler::{Atom, NifUntaggedEnum, OwnedEnv};
-use turso::{Error as TursoError, IntoValue, Value as TursoValue};
+use rustler::{Atom, Env, NifUntaggedEnum, OwnedEnv, Resource};
+use turso::{Error as TursoError, IntoValue, Statement, Value as TursoValue};
+
+pub struct StatementResource {
+    pub stmt: Statement,
+}
+
+#[rustler::resource_impl]
+impl Resource for StatementResource {
+    fn destructor(self, _env: Env<'_>) {}
+}
+
+// Params and Value handling
 
 #[derive(NifUntaggedEnum, Debug, Clone)]
 pub enum Params {
