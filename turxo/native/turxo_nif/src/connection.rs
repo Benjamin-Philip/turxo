@@ -1,6 +1,7 @@
 use crate::statement::{Params, StatementResource, Value, params_atom_to_key};
 use crate::utils::{runtime, send_result, setup_async_env};
 use rustler::{Env, Reference, Resource, ResourceArc};
+use tokio::sync::Mutex;
 use turso::{Connection, Error as TursoError, Rows};
 
 pub struct ConnectionResource {
@@ -110,7 +111,7 @@ fn conn_prepare<'a>(
         };
 
         let result = match stmt {
-            Ok(stmt) => Ok(ResourceArc::new(StatementResource { stmt })),
+            Ok(stmt) => Ok(ResourceArc::new(StatementResource(Mutex::new(stmt)))),
             Err(e) => Err(e.to_string()),
         };
 

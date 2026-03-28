@@ -1,9 +1,9 @@
-use rustler::{Atom, Env, NifUntaggedEnum, OwnedEnv, Resource};
+use crate::utils::{runtime, send_result, setup_async_env};
+use rustler::{Atom, Env, NifUntaggedEnum, OwnedEnv, Reference, Resource, ResourceArc};
+use tokio::sync::Mutex;
 use turso::{Error as TursoError, IntoValue, Statement, Value as TursoValue};
 
-pub struct StatementResource {
-    pub stmt: Statement,
-}
+pub struct StatementResource(pub Mutex<Statement>);
 
 #[rustler::resource_impl]
 impl Resource for StatementResource {
@@ -72,4 +72,29 @@ impl From<Value> for TursoValue {
     fn from(value: Value) -> TursoValue {
         value.into_value().unwrap()
     }
+}
+
+// NIFs
+
+#[rustler::nif]
+fn stmt_execute<'a>(
+    env: Env<'a>,
+    stmt_resource: ResourceArc<StatementResource>,
+    params: Params,
+) -> Reference<'a> {
+    let (erl_ref, pid, owned_env, owned_ref) = setup_async_env(env);
+
+    runtime().spawn(async move {
+        let mut stmt = stmt_resource.0.try_lock().unwrap();
+
+        let result = match params {
+            Params::Positional(p) => stmt.execute(p).await,
+            Params::Named(n) => stmt.execute(params_atom_to_key(&owned_env, n)).await,
+        };
+
+        let result = result.map_err(|e| e.to_string());
+        send_result::<u64>(result, pid, owned_env, owned_ref);
+    });
+
+    erl_ref
 }

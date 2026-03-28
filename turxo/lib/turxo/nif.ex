@@ -9,7 +9,9 @@ defmodule Turxo.NIF do
     conn_prepare: [:conn, :sql, :cached?]
   ]
 
-  nifs = db ++ conn
+  stmt = [stmt_execute: [:stmt, :params]]
+
+  nifs = db ++ conn ++ stmt
 
   for {name, args} <- nifs do
     to_splice = Enum.map(args, fn arg -> Macro.var(arg, __MODULE__) end)

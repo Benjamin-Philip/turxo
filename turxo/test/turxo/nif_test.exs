@@ -152,4 +152,17 @@ defmodule Turxo.NIFTest do
     assert {:ok, stmt} = NIF.conn_prepare(conn, "SELECT id FROM users WHERE name = (?1)", true)
     assert is_reference(stmt)
   end
+
+  test "stmt_execute/2", %{conn: conn} do
+    # The conn execute and query functions test parameter handling
+    # Thus, we don't need to repeat those tests further
+
+    {:ok, stmt} =
+      NIF.conn_prepare(conn, "INSERT INTO users (name, email) VALUES (:name, :email)", false)
+
+    assert {:ok, 1} = NIF.stmt_execute(stmt, name: "John", email: "john@example.com")
+
+    assert {:ok, [["john@example.com"]]} =
+             NIF.conn_query(conn, "SELECT email FROM users WHERE name = (?1)", ["John"])
+  end
 end
