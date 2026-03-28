@@ -2,9 +2,16 @@ defmodule Turxo.NIF do
   use Rustler, otp_app: :turxo, crate: :turxo_nif
 
   db = [db_open: [:path], db_connect: [:db]]
-  conn = [conn_execute: [:conn, :sql, :params], conn_query: [:conn, :sql, :params]]
 
-  nifs = db ++ conn
+  conn = [
+    conn_execute: [:conn, :sql, :params],
+    conn_query: [:conn, :sql, :params],
+    conn_prepare: [:conn, :sql, :cached?]
+  ]
+
+  stmt = [stmt_execute: [:stmt, :params], stmt_query: [:stmt, :params]]
+
+  nifs = db ++ conn ++ stmt
 
   for {name, args} <- nifs do
     to_splice = Enum.map(args, fn arg -> Macro.var(arg, __MODULE__) end)

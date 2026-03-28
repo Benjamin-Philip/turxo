@@ -1,6 +1,7 @@
-use crate::statement::{params_atom_to_key, Params, Value};
+use crate::statement::{params_atom_to_key, Params, StatementResource, Value};
 use crate::utils::{runtime, send_result, setup_async_env};
 use rustler::{Env, Reference, Resource, ResourceArc};
+use tokio::sync::Mutex;
 use turso::{Connection, Error as TursoError, Rows};
 
 pub struct ConnectionResource {
@@ -74,7 +75,7 @@ fn conn_query<'a>(
     erl_ref
 }
 
-async fn decode_rows(mut rows: Rows) -> Result<Vec<Vec<Value>>, TursoError> {
+pub async fn decode_rows(mut rows: Rows) -> Result<Vec<Vec<Value>>, TursoError> {
     let count = rows.column_count();
     let mut decoded = Vec::new();
 
@@ -89,4 +90,33 @@ async fn decode_rows(mut rows: Rows) -> Result<Vec<Vec<Value>>, TursoError> {
     }
 
     Ok(decoded)
+}
+
+// Prepare Statements
+
+#[rustler::nif]
+fn conn_prepare<'a>(
+    env: Env<'a>,
+    conn_resource: ResourceArc<ConnectionResource>,
+    sql: String,
+    cached: bool,
+) -> Reference<'a> {
+    let (erl_ref, pid, owned_env, owned_ref) = setup_async_env(env);
+
+    runtime().spawn(async move {
+        let stmt = if cached {
+            conn_resource.conn.prepare_cached(sql).await
+        } else {
+            conn_resource.conn.prepare(sql).await
+        };
+
+        let result = match stmt {
+            Ok(stmt) => Ok(ResourceArc::new(StatementResource(Mutex::new(stmt)))),
+            Err(e) => Err(e.to_string()),
+        };
+
+        send_result::<ResourceArc<StatementResource>>(result, pid, owned_env, owned_ref);
+    });
+
+    erl_ref
 }

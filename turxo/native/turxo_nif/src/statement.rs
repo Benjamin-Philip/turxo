@@ -1,5 +1,17 @@
-use rustler::{Atom, NifUntaggedEnum, OwnedEnv};
-use turso::{Error as TursoError, IntoValue, Value as TursoValue};
+use crate::connection::decode_rows;
+use crate::utils::{runtime, send_result, setup_async_env};
+use rustler::{Atom, Env, NifUntaggedEnum, OwnedEnv, Reference, Resource, ResourceArc};
+use tokio::sync::Mutex;
+use turso::{Error as TursoError, IntoValue, Statement, Value as TursoValue};
+
+pub struct StatementResource(pub Mutex<Statement>);
+
+#[rustler::resource_impl]
+impl Resource for StatementResource {
+    fn destructor(self, _env: Env<'_>) {}
+}
+
+// Params and Value handling
 
 #[derive(NifUntaggedEnum, Debug, Clone)]
 pub enum Params {
@@ -61,4 +73,56 @@ impl From<Value> for TursoValue {
     fn from(value: Value) -> TursoValue {
         value.into_value().unwrap()
     }
+}
+
+// NIFs
+
+#[rustler::nif]
+fn stmt_execute<'a>(
+    env: Env<'a>,
+    stmt_resource: ResourceArc<StatementResource>,
+    params: Params,
+) -> Reference<'a> {
+    let (erl_ref, pid, owned_env, owned_ref) = setup_async_env(env);
+
+    runtime().spawn(async move {
+        let mut stmt = stmt_resource.0.try_lock().unwrap();
+
+        let result = match params {
+            Params::Positional(p) => stmt.execute(p).await,
+            Params::Named(n) => stmt.execute(params_atom_to_key(&owned_env, n)).await,
+        };
+
+        let result = result.map_err(|e| e.to_string());
+        send_result::<u64>(result, pid, owned_env, owned_ref);
+    });
+
+    erl_ref
+}
+
+#[rustler::nif]
+fn stmt_query<'a>(
+    env: Env<'a>,
+    stmt_resource: ResourceArc<StatementResource>,
+    params: Params,
+) -> Reference<'a> {
+    let (erl_ref, pid, owned_env, owned_ref) = setup_async_env(env);
+
+    runtime().spawn(async move {
+        let mut stmt = stmt_resource.0.try_lock().unwrap();
+
+        let rows = match params {
+            Params::Positional(p) => stmt.query(p).await,
+            Params::Named(n) => stmt.query(params_atom_to_key(&owned_env, n)).await,
+        };
+
+        let result = match rows {
+            Ok(rows) => decode_rows(rows).await.map_err(|e| e.to_string()),
+            Err(e) => Err(e.to_string()),
+        };
+
+        send_result(result, pid, owned_env, owned_ref);
+    });
+
+    erl_ref
 }

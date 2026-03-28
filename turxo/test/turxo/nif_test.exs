@@ -4,6 +4,35 @@ defmodule Turxo.NIFTest do
   alias Turxo.NIF, as: Unwrapped
   alias Turxo.NIF.Wrapped, as: NIF
 
+  setup do
+    {:ok, db} = NIF.db_open(":memory:")
+    {:ok, conn} = NIF.db_connect(db)
+
+    {:ok, 0} =
+      NIF.conn_execute(
+        conn,
+        "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)",
+        []
+      )
+
+    data = [
+      ["Alice", "alice@example.com"],
+      ["Bob", nil],
+      ["Charlie", "charlie@example.com"]
+    ]
+
+    for pair <- data do
+      {:ok, 1} =
+        NIF.conn_execute(
+          conn,
+          "INSERT INTO users (name, email) VALUES (:name, :email)",
+          pair
+        )
+    end
+
+    %{db: db, conn: conn, data: data}
+  end
+
   test "Wrapped correctly wraps" do
     # Wrapped version of the unwrapped db_open test below.
     #
@@ -37,28 +66,12 @@ defmodule Turxo.NIFTest do
     end
   end
 
-  test "db_connect/1" do
-    {:ok, db} = NIF.db_open(":memory:")
-
+  test "db_connect/1", %{db: db} do
     assert {:ok, conn} = NIF.db_connect(db)
     assert is_reference(conn)
   end
 
   describe "conn_execute/3 correctly handles" do
-    setup do
-      {:ok, db} = NIF.db_open(":memory:")
-      {:ok, conn} = NIF.db_connect(db)
-
-      {:ok, 0} =
-        NIF.conn_execute(
-          conn,
-          "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)",
-          []
-        )
-
-      %{db: db, conn: conn}
-    end
-
     test "no parameters", %{conn: conn} do
       assert {:ok, 0} =
                NIF.conn_execute(
@@ -96,35 +109,6 @@ defmodule Turxo.NIFTest do
   end
 
   describe "conn_query/3 correctly handles" do
-    setup do
-      {:ok, db} = NIF.db_open(":memory:")
-      {:ok, conn} = NIF.db_connect(db)
-
-      {:ok, 0} =
-        NIF.conn_execute(
-          conn,
-          "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)",
-          []
-        )
-
-      data = [
-        ["Alice", "alice@example.com"],
-        ["Bob", nil],
-        ["Charlie", "charlie@example.com"]
-      ]
-
-      for pair <- data do
-        {:ok, 1} =
-          NIF.conn_execute(
-            conn,
-            "INSERT INTO users (name, email) VALUES (:name, :email)",
-            pair
-          )
-      end
-
-      %{db: db, conn: conn, data: data}
-    end
-
     test "no parameters", %{conn: conn, data: data} do
       assert {:ok, [[3]]} = NIF.conn_query(conn, "SELECT COUNT(*) FROM users", [])
       assert {:ok, ^data} = NIF.conn_query(conn, "SELECT name, email FROM users", [])
@@ -159,5 +143,34 @@ defmodule Turxo.NIFTest do
       assert {:ok, [["charlie@example.com"]]} =
                NIF.conn_query(conn, "SELECT email FROM users WHERE id = (:id)", id: 3)
     end
+  end
+
+  test "conn_prepare/3", %{conn: conn} do
+    assert {:ok, stmt} = NIF.conn_prepare(conn, "SELECT id FROM users WHERE name = (?1)", false)
+    assert is_reference(stmt)
+
+    assert {:ok, stmt} = NIF.conn_prepare(conn, "SELECT id FROM users WHERE name = (?1)", true)
+    assert is_reference(stmt)
+  end
+
+  test "stmt_execute/2", %{conn: conn} do
+    # The conn execute and query functions test parameter handling
+    # Thus, we don't need to repeat those tests further
+
+    {:ok, stmt} =
+      NIF.conn_prepare(conn, "INSERT INTO users (name, email) VALUES (:name, :email)", false)
+
+    assert {:ok, 1} = NIF.stmt_execute(stmt, name: "John", email: "john@example.com")
+
+    assert {:ok, [["john@example.com"]]} =
+             NIF.conn_query(conn, "SELECT email FROM users WHERE name = (?1)", ["John"])
+  end
+
+  test "stmt_query/2", %{conn: conn} do
+    {:ok, stmt} =
+      NIF.conn_prepare(conn, "SELECT email FROM users WHERE name = (:name)", false)
+
+    assert {:ok, [["alice@example.com"]]} = NIF.stmt_query(stmt, name: "Alice")
+    assert {:ok, [["charlie@example.com"]]} = NIF.stmt_query(stmt, name: "Charlie")
   end
 end
