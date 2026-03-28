@@ -1,6 +1,7 @@
 use crate::connection::ConnectionResource;
 use crate::utils::{runtime, send_result, setup_async_env};
 use rustler::{Env, Reference, Resource, ResourceArc};
+use tokio::sync::RwLock;
 use turso::{Builder, Database};
 
 // Database and Connection Setup
@@ -40,7 +41,7 @@ fn db_connect<'a>(env: Env<'a>, db_resource: ResourceArc<DatabaseResource>) -> R
         let result = db_resource.db.connect();
 
         let result = match result {
-            Ok(conn) => Ok(ResourceArc::new(ConnectionResource { conn })),
+            Ok(conn) => Ok(ResourceArc::new(ConnectionResource(RwLock::new(conn)))),
             Err(e) => Err(e.to_string()),
         };
 

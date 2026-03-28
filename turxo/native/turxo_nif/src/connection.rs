@@ -1,12 +1,10 @@
 use crate::statement::{params_atom_to_key, Params, StatementResource, Value};
 use crate::utils::{runtime, send_result, setup_async_env};
 use rustler::{Env, Reference, Resource, ResourceArc};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use turso::{Connection, Error as TursoError, Rows};
 
-pub struct ConnectionResource {
-    pub conn: Connection,
-}
+pub struct ConnectionResource(pub RwLock<Connection>);
 
 #[rustler::resource_impl]
 impl Resource for ConnectionResource {
@@ -25,14 +23,10 @@ fn conn_execute<'a>(
     let (erl_ref, pid, owned_env, owned_ref) = setup_async_env(env);
 
     runtime().spawn(async move {
+        let conn = conn_resource.0.try_read().unwrap();
         let result = match params {
-            Params::Positional(p) => conn_resource.conn.execute(sql, p).await,
-            Params::Named(n) => {
-                conn_resource
-                    .conn
-                    .execute(sql, params_atom_to_key(&owned_env, n))
-                    .await
-            }
+            Params::Positional(p) => conn.execute(sql, p).await,
+            Params::Named(n) => conn.execute(sql, params_atom_to_key(&owned_env, n)).await,
         };
 
         let result = result.map_err(|e| e.to_string());
@@ -54,14 +48,10 @@ fn conn_query<'a>(
     let (erl_ref, pid, owned_env, owned_ref) = setup_async_env(env);
 
     runtime().spawn(async move {
+        let conn = conn_resource.0.try_read().unwrap();
         let rows = match params {
-            Params::Positional(p) => conn_resource.conn.query(sql, p).await,
-            Params::Named(n) => {
-                conn_resource
-                    .conn
-                    .query(sql, params_atom_to_key(&owned_env, n))
-                    .await
-            }
+            Params::Positional(p) => conn.query(sql, p).await,
+            Params::Named(n) => conn.query(sql, params_atom_to_key(&owned_env, n)).await,
         };
 
         let result = match rows {
@@ -104,10 +94,12 @@ fn conn_prepare<'a>(
     let (erl_ref, pid, owned_env, owned_ref) = setup_async_env(env);
 
     runtime().spawn(async move {
+        let conn = conn_resource.0.try_read().unwrap();
+
         let stmt = if cached {
-            conn_resource.conn.prepare_cached(sql).await
+            conn.prepare_cached(sql).await
         } else {
-            conn_resource.conn.prepare(sql).await
+            conn.prepare(sql).await
         };
 
         let result = match stmt {
