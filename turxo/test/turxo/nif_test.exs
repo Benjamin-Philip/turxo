@@ -165,4 +165,12 @@ defmodule Turxo.NIFTest do
     assert {:ok, [["john@example.com"]]} =
              NIF.conn_query(conn, "SELECT email FROM users WHERE name = (?1)", ["John"])
   end
+
+  test "stmt_query/2", %{conn: conn} do
+    {:ok, stmt} =
+      NIF.conn_prepare(conn, "SELECT email FROM users WHERE name = (:name)", false)
+
+    assert {:ok, [["alice@example.com"]]} = NIF.stmt_query(stmt, name: "Alice")
+    assert {:ok, [["charlie@example.com"]]} = NIF.stmt_query(stmt, name: "Charlie")
+  end
 end

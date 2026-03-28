@@ -9,7 +9,7 @@ defmodule Turxo.NIF do
     conn_prepare: [:conn, :sql, :cached?]
   ]
 
-  stmt = [stmt_execute: [:stmt, :params]]
+  stmt = [stmt_execute: [:stmt, :params], stmt_query: [:stmt, :params]]
 
   nifs = db ++ conn ++ stmt
 

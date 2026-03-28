@@ -75,7 +75,7 @@ fn conn_query<'a>(
     erl_ref
 }
 
-async fn decode_rows(mut rows: Rows) -> Result<Vec<Vec<Value>>, TursoError> {
+pub async fn decode_rows(mut rows: Rows) -> Result<Vec<Vec<Value>>, TursoError> {
     let count = rows.column_count();
     let mut decoded = Vec::new();
 

@@ -1,3 +1,4 @@
+use crate::connection::decode_rows;
 use crate::utils::{runtime, send_result, setup_async_env};
 use rustler::{Atom, Env, NifUntaggedEnum, OwnedEnv, Reference, Resource, ResourceArc};
 use tokio::sync::Mutex;
@@ -94,6 +95,33 @@ fn stmt_execute<'a>(
 
         let result = result.map_err(|e| e.to_string());
         send_result::<u64>(result, pid, owned_env, owned_ref);
+    });
+
+    erl_ref
+}
+
+#[rustler::nif]
+fn stmt_query<'a>(
+    env: Env<'a>,
+    stmt_resource: ResourceArc<StatementResource>,
+    params: Params,
+) -> Reference<'a> {
+    let (erl_ref, pid, owned_env, owned_ref) = setup_async_env(env);
+
+    runtime().spawn(async move {
+        let mut stmt = stmt_resource.0.try_lock().unwrap();
+
+        let rows = match params {
+            Params::Positional(p) => stmt.query(p).await,
+            Params::Named(n) => stmt.query(params_atom_to_key(&owned_env, n)).await,
+        };
+
+        let result = match rows {
+            Ok(rows) => decode_rows(rows).await.map_err(|e| e.to_string()),
+            Err(e) => Err(e.to_string()),
+        };
+
+        send_result(result, pid, owned_env, owned_ref);
     });
 
     erl_ref
