@@ -6,7 +6,7 @@
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    nixpkgs.url = "nixpkgs/nixos-unstable";
+    nixpkgs.url = "nixpkgs/nixos-26.05";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -39,7 +39,7 @@
             darwin.apple_sdk.frameworks.SystemConfiguration
           ];
 
-        nixfmt = nixpkgs.legacyPackages.${system}.nixfmt-rfc-style;
+        nixfmt = nixpkgs.legacyPackages.${system}.nixfmt;
 
         erlang = pkgs.beam.packagesWith pkgs.beam.interpreters.erlang_28;
         packages = [
