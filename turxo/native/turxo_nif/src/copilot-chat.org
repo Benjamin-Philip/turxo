@@ -1,0 +1,814 @@
+:PROPERTIES:
+:GPTEL_MODEL: gpt-4.1
+:GPTEL_BACKEND: Copilot
+:GPTEL_SYSTEM: You are a large language model living in Emacs and a helpful assistant. Respond concisely.
+:GPTEL_TOOLS:
+:GPTEL_BOUNDS: ((response (467 3611) (3612 7695) (7867 12274) (12373 16740) (16812 20614) (20701 23995) (24145 28386) (28484 32879) (33153 38261)))
+:END:
+
+*** I'm trying to define conn_transaction, but Transaction<'_> has a lifetime parameter, dependent on conn. How do I handle this?
+
+
+You're running into a classic Rust limitation: *=Transaction<'a>=* (from Turso or most DB drivers) is explicitly tied by lifetime to the parent =Connection=, because it borrows data from the connection (for safety).
+
+You can't safely store a =Transaction<'a>= with a concrete lifetime inside a struct (=TransactionResource=) that's held by a Rustler =Resource=, because the connection (=conn=) can't outlive the struct /and/ be borrowed at the same time.
+
+*Common options:*
+
+*** 1. Don't Store Transaction Directly
+Store connection and transaction separately. When you need to operate on the transaction, keep it in a local variable per function invocation, not in the resource. This only really works for very short-lived transactions.
+
+*** 2. Use =Box::leak= (NOT recommended for production)
+Some try to "cheat" the borrow checker by doing:
+#+begin_src rust
+let tx: Transaction<'static> = unsafe { std::mem::transmute(tx) };
+#+end_src
+Or using =Box::leak= to get a ='static= reference:
+#+begin_src rust
+let tx = conn.transaction().await.unwrap();
+let tx = Box::leak(Box::new(tx));
+// Now tx: &'static mut Transaction<'_>
+#+end_src
+But *this leads to memory leaks* and is unsafe. Should not be used in serious production code.
+
+*** 3. Store Both in Arc<Mutex<>>
+You might try "widening" the lifetime by storing both the connection and the transaction together, in the same struct, wrapping everything in some kind of =Arc<Mutex<_>>=, and /never/ exposing a reference to the connection while the transaction exists. Even this is tricky, as Rust's type system doesn't "forget" the lifetimes. You'd typically use an enum:
+#+begin_src rust
+struct TransactionResource {
+    conn: Option<Connection>,
+    tx: Option<Transaction<'a>>,
+}
+#+end_src
+But you'd still have to only ever move the transaction out, use it, then return it—can't safely leave it stored for longer.
+
+*** 4. Use "Connection as Resource" pattern
+You don't implement a separate resource for the transaction. You give Erlang code a reference to the Connection resource during the Tx, and ensure all transaction commands are invoked on the connection resource, passing a transaction "handle" (an index, or marker) as a state in Rust (like, with an internal =HashMap<Ref, Transaction>=). This is often what diesel and tokio-postgres frontends do. But this is more complicated, especially in a NIF.
+
+---
+
+** *Conclusion / Recommendation*
+*Safest option:* /Don't try to store =Transaction<'_>= as a field inside a resource struct for long-lived Erlang-side handles./  
+If you need transactions to be long-lived and accessible as Resource handles, you'll need to *refactor* to store all active transactions somewhere (ex: global or in the Connection struct) and access them via unique IDs.
+
+If you want a quick fix for tests/hacking (with risk!): use =Box::leak= or =transmute= to unsafely give =Transaction<'static>=, but *this is unsafe and leaks memory*.
+
+*** *Example (unsafe!):*
+#+begin_src rust
+let tx = conn.transaction().await?;
+let static_tx: Transaction<'static> = unsafe { std::mem::transmute::<_, Transaction<'static>>(tx) };
+self.tx = Some(static_tx);
+#+end_src
+But again: *unsafe and leaks!*
+
+---
+
+*For a safe, robust solution, you'll either:*
+- Only allow transactions to exist within a single function call (not as a Resource),
+- Or implement a transaction manager to map IDs to transactions, and mutate e.g. the ConnectionResource to "own" transactions while they're alive.
+
+---
+*For most NIF/Erlang projects, best practice is not to wrap transaction lifetimes in cross-language persistent handles! Instead, use transactions in a single-call scope (begin/commit/rollback as one function), or implement a transaction registry.*
+
+If you want detailed code with one of these approaches, let me know!
+
+*** 
+You're right: =turso::transaction::Transaction<'_>= (or just =Transaction<'_>=) is tied to the lifetime of the connection it was created from. Rust's type system ensures you can't move a =Transaction= outlasting its connection. But you need to put it in a =ResourceArc= (for NIF resource sharing), which requires ='static= lifetime.
+
+*This is a classic Rust FFI/lifetime "self-referential struct" problem.*
+
+** The Problem
+
+#+begin_src rust
+pub struct TransactionResource {
+    pub conn_resource: ResourceArc<ConnectionResource>,
+    pub tx: Transaction<'static>, // can't do this!
+}
+#+end_src
+
+But you can't turn the lifetime into ='static= safely, because the transaction must not outlive the connection.
+
+** Typical Solutions
+
+*** 1. Use =Box::leak= Hack (NOT RECOMMENDED!)
+
+Some folks try to leak the connection (Box::leak/Arc::into_raw) to give it static lifetime, but this is *unsafe* and will likely cause memory leaks and unsound code in Rustler/NIF context.
+
+*** 2. Store =Transaction= Alongside the Connection (The safe pattern!)
+
+**** The Pattern
+
+- Store both the connection and the transaction together, ensuring they are dropped together.
+- The most straightforward and safe way is to make =TransactionResource= own the connection for its lifetime.
+
+**** Minimal safe pattern
+
+#+begin_src rust
+pub struct TransactionResource {
+    pub conn: Option<Connection>, // or store the whole `ConnectionResource`
+    pub tx: Option<Transaction<'static>>,
+}
+#+end_src
+
+But, in Rustler, if you want to keep the connection available for other usages, you can't "move" it; you must "borrow" it for the transaction's lifetime.
+
+***** So, usual solution: *cannot have both the connection and a transaction resource existing simultaneously exposed to Erlang.*
+
+**** Simpler, idiomatic way:
+
+*Do not store =Transaction<'_>= as a resource! Instead:*
+- Each "transaction" operation is performed as a single async function, get the transaction, run the closure, and auto-commit or rollback.
+- If you really want a resource, use some =ArcMutex<Option<Transaction<'_>>>= and /RTFM/ to carefully handle lifetimes (you'll probably need unsafe hacks).
+
+*** 3. Use 'parking_lot' + Mutex With Interior Mutability
+
+Still tricky, because the lifetime _must_ be tracked, and you can't put ='static= in a safe way.
+
+** Recommendation
+
+*** Option 1: Provide only "transaction callback" API
+
+This is what most async DB Rust APIs do:
+
+#+begin_src rust
+pub async fn with_transaction<F, Fut, T>(&self, f: F) -> Result<T, Error>
+where
+    F: FnOnce(&mut Transaction<'_>) -> Fut,
+    Fut: Future<Output = Result<T, Error>>
+#+end_src
+
+So your NIF only exposes "run this Elixir closure inside a transaction," not a transaction resource.
+
+*** Option 2: Dangerous (not recommended) hack if you really must have a transaction resource:
+
+- Store the transaction and a reference-counted connection together, /and/ ensure you never use the connection outside NIF while the transaction exists.
+- Use =unsafe= to "extend" the lifetime:
+    #+begin_src rust
+    let tx: Transaction<'_> = ...;
+    let tx_static: Transaction<'static> = std::mem::transmute::<Transaction<'_>, Transaction<'static>>(tx);
+    #+end_src
+- You must ensure never to use conn and tx concurrently, and only drop tx before the connection resource.
+- This is /extremely/ error-prone and not recommended.
+
+---
+
+** In summary (best practice):
+
+- Because of the borrow checker, you probably cannot/should not expose a =Transaction= resource that outlives its connection.
+- Instead, expose a "run in transaction" API.
+- If you must expose a resource for a transaction, then you need to store the connection /inside/ the resource, so it never outlives the transaction, or use unsafe hacks (not recommended).
+
+---
+
+*** See also:
+- [Why can't I return a reference to a local variable? (Rust FAQ)](https://doc.rust-lang.org/book/ch04-02-references-and-borrowing.html#dangling-references)
+
+*** In practice, for NIFs: Keep transaction ops "atomic" or rethink the resource layout!
+
+Let me know if you want example code for "atomic transaction callback" API.
+
+* I think your "run this closure" approach can work for Rust closures, but not for Elixir ones, since Elixir closures are managed by BEAM. Give me another alternative?
+
+
+You're exactly right: the "run this closure" or =with_transaction= approach works well in Rust (where you can pass a Rust closure), but *does not work with Elixir/Erlang* because the BEAM process and Rust NIF boundary can't call back into BEAM/Erlang code during an async NIF—Rustler doesn't support running Elixir code from a Rust future.
+
+** Practical, Safe Alternatives
+
+*** 1. Expose Only Top-Level Transaction Operations (RECOMMENDED)
+
+Rather than keep the transaction object around, you offer NIFs like:
+
+- =conn_transaction_begin(conn) -> transaction_handle=
+- =transaction_commit(handle)=
+- =transaction_rollback(handle)=
+- =transaction_execute(handle, ...)=
+- etc.
+
+But *the tricky part is still the lifetime*: you must ensure that the transaction resource cannot outlive the connection it borrows. This is difficult because both resources are managed independently by the BEAM's GC.
+
+**** Solution
+
+*a. Hold the connection as part of the transaction resource*  
+When creating a transaction, /move/ the connection from the connection resource into the transaction resource, so the transaction gets owned by the resource. Once the transaction is finished (committed/rolled back), the connection can be moved back to a new connection resource and returned to Elixir.
+
+Here's the flow:
+
+1. =conn_resource= (resource holding a connection)
+2. Elixir calls =begin_transaction(conn_resource)=, which:
+   - Removes the connection from =conn_resource=
+   - Creates a =Transaction= object from it
+   - Returns a =tx_resource= (holding both the =Transaction= and original Connection)
+3. On =commit= or =rollback=, the transaction is consumed, and the connection is returned to a new =conn_resource=
+
+This avoids holding a reference with an unsafe lifetime.
+
+*Drawback:* The original connection handle is "locked"/unusable on the Elixir side while a transaction is in use—this matches the guarantee Rust requires.
+
+**** Rough code skeleton:
+
+#+begin_src rust
+// You'll need Option hacks or RefCell for this with Rustler
+pub struct TransactionResource {
+    // The connection is temporarily owned by the transaction
+    pub conn: Option<Connection>,
+    pub tx: Option<Transaction<'static>>, // (use unsafe to transmute, see note below)
+}
+#+end_src
+
+But, since Transaction still has a non-static lifetime,
+- You may need to cheat with =unsafe= and =std::mem::transmute=
+- *But you must absolutely guarantee soundness*: once you take the connection out, the transaction must be dropped before the connection is ever accessed again. This matches the semantics you're enforcing at the Elixir API level because "using the connection while a transaction is outstanding" leads to undefined behavior in most libraries anyway.
+
+*Many libraries (e.g., sqlx) enforce this pattern.*
+
+*** 2. Restrict to "Single Transaction per Connection" Policy
+
+You can mark the connection as "in use" (e.g., lock it with a Mutex) while a transaction resource is alive, and refuse to use it elsewhere.
+
+But you will still need to /tie the transaction's lifetime to the connection/, which usually means:
+- Making the connection inaccessible while the transaction is alive, or
+- Owning both within the same struct (as above).
+
+---
+
+** Avoiding Unsafe
+
+*You cannot safely create a resource with =Transaction<'static>= without using =unsafe=* because the compiler does not/cannot know you won't outlive your data.
+
+If you do use =unsafe=, ensure:
+- The =Transaction= is always dropped before the connection is returned/made available,
+- No code /ever/ uses the connection concurrently with the outstanding transaction.
+
+** Bottom line
+
+- /You must reflect the Rust lifetime rules in your resource/state design/
+- This will mean restricting concurrent use of the connection while a transaction is open
+- /Expose operations on the transaction resource, not on the connection, during a transaction/
+
+** Summary
+
+- When starting a transaction: temporarily move ownership of =Connection= from the connection resource to the transaction resource.
+- When committing/rolling back, return the connection to a new connection resource.
+- Disallow use of the connection while a transaction is in-flight.
+
+This pattern is used by many async database crates where transactional lifetimes are enforced. It is also safe and compatible with Rustler's resource model (just a little fussy due to Rust lifetimes).
+
+*If you want a minimal code sketch, just ask!*
+
+* Would holding the connection, the connection resource arc and transaction in one struct help?
+
+**Yes, holding the connection, the connection resource arc, and the transaction in a single struct can help*—because it allows you to tightly control lifetimes and access, matching the guarantees Rust enforces at compile time.
+
+*** Why does this help?
+
+The problem is that =Transaction<'a>= borrows the =Connection= for its lifetime. If both are stored in the same struct as fields (and you only access them through this resource), you can:
+- Ensure that =Transaction= can never outlive =Connection= (the struct will own both, and they will be dropped together)
+- Restrict use of the underlying =Connection= while the transaction is alive (as required by most DB libraries and by Rust's type system)
+
+So, this pattern can /model the true lifetimes in a resource-safe manner/.
+
+*** Pattern Example
+
+You might use:
+
+#+begin_src rust
+pub struct TransactionResource {
+    conn_arc: Option<ResourceArc<ConnectionResource>>,
+    conn: Option<Connection>,
+    tx: Option<Transaction<'tx>>,
+}
+#+end_src
+
+But, there are *two key caveats*:
+
+1. *You cannot have both a usable connection arc and a live transaction at the same time unless you split ownership:*  
+    - If the ConnectionResource (the thing inside the Arc) is currently owned by the transaction, the old resource arc must be _empty_ or marked unusable while the transaction is alive, to reflect Rust's borrow rules.
+
+2. *To actually /move/ the Connection out of a ResourceArc, you must ensure exclusive ownership.*  
+    - With RefCell / Mutex or other indirection, you can temporarily take the connection out and associate it with the transaction. The ResourceArc can then be empty or marked as "checked out."
+
+*** Typical implementation strategy
+
+- When you start a transaction:
+    - Take the Connection out of the ConnectionResource (Option::take, locking, etc.)
+    - Create the Transaction (with the necessary borrow)
+    - Create a TransactionResource that owns both the Transaction (and possibly the Arc for later restoration)
+- While a TransactionResource is alive, the ConnectionResource cannot be used
+- On commit/rollback:
+    - Consume the Transaction
+    - Put the Connection back into the original Resource (or wrap it in a new one and return)
+
+This is what many DB connection pool crates do, only they "check out" a connection and prevent its use elsewhere.
+
+*** Sample (simplified):
+
+#+begin_src rust
+pub struct ConnectionResource(pub Mutex<Option<Connection>>);
+
+pub struct TransactionResource {
+    conn_arc: ResourceArc<ConnectionResource>,
+    tx: Option<Transaction<'static>>, // see note below re: lifetime!
+}
+#+end_src
+
+When opening a transaction:
+
+#+begin_src rust
+let mut conn_lock = conn_arc.0.lock().unwrap();
+let conn = conn_lock.take().expect("Connection already checked out");
+let tx = conn.transaction().await?;
+// tx has lifetime of conn, which you now own
+let tx_res = TransactionResource { conn_arc, tx: Some(unsafe_transmute_to_static_lifetime(tx)) };
+// conn is not accessible until tx_res is dropped/destroyed and you put it back
+#+end_src
+
+*** Dealing with lifetimes
+
+*Beware:* If you store both =Connection= and =Transaction= as members, you might run into the struct layout problem ("self-referencing structs")—Rust doesn't allow a struct to contain an object that borrows from another field within the same struct (google "self-referential struct rust").  
+- The only ways to solve this /safely/ are to pin things or restructure code so you never need to reference-within-self for long periods.
+- Alternatively, you can /move/ the connection out for the duration of the transaction, then only pass /one/ of them around at a time.
+
+*** Conclusion
+
+- *Yes,* holding both the connection and the transaction inside the resource (and possibly the arc) is the typical safe way to mirror the Rust borrow checker in a BEAM resource environment.
+- This ensures that lifetime and exclusivity are maintained, and prevents unsound access to the connection during the transaction.
+- Just beware of Rust's prohibition on self-referential structs.
+
+If you need to work around the self-reference issue, temporarily "move out" the connection and only store the transaction and connection separately, or use indirection (e.g., pinning, some =Arc= tricks, or manually enforcing via =Option=).
+
+*If you want a code sketch or links for how Rust DB pools or libraries handle this, let me know!*
+
+* Would tokio's RwLock with lock.write_owned be better than a mutex?
+
+**Short answer:*  
+Yes, =tokio::sync::RwLock= with =.write_owned()= can be a good choice in async code, /especially/ if you need to sometimes share the resource for reads (e.g., multiple concurrent queries) and exclusive access when writing (e.g., for starting a transaction).  
+However, you must understand the tradeoffs compared to a plain async mutex.
+
+---
+
+** Comparing Mutex vs. RwLock
+
+*Mutex*
+- Only one task can access the resource at a time—period.
+- Simple: all access is exclusive.
+- =tokio::sync::Mutex= allows =.lock().await=, and is often the safest/simplest choice when (a) the resource is almost always accessed exclusively or (b) there are mutation/ownership complications (like moving values in and out).
+
+*Tokio RwLock*
+- Many concurrent readers—or one exclusive writer (no concurrent readers when writing).
+- Good for resources with many reads but infrequent writes.
+- With =.write().await=, you get a write /reference/—but if you want to transfer the contained value out, you need =.write_owned().await=.
+- =.write_owned()= gives you ownership of the lock and the data. This makes moving the resource out easier.
+
+*** For your use-case (Connection+Transaction):
+
+- If you want to /move/ the Connection out when starting a transaction, =.write_owned()= is helpful: you get the lock ownership and can use =Option::take()=.
+- If you want concurrent read access for queries, but exclusive write/take access for transaction-scoped operations, an RwLock is ideal.
+
+** Example
+
+#+begin_src rust
+// Initialization
+pub struct ConnectionResource(pub tokio::sync::RwLock<Option<Connection>>);
+
+// Query (shared)
+async fn query(conn_res: ResourceArc<ConnectionResource>) {
+    let read_guard = conn_res.0.read().await;
+    let conn = read_guard.as_ref().unwrap();
+    // perform query using &conn
+}
+
+// Start Transaction (take exclusive ownership)
+async fn begin_transaction(conn_res: ResourceArc<ConnectionResource>) -> TransactionResource {
+    let write_guard = conn_res.0.write_owned().await; // This gives you full ownership!
+    let mut guard = write_guard;
+    let conn = guard.take().unwrap(); // Now the Option<Connection> is None in the resource.
+    let tx = conn.transaction().await.unwrap();
+    // etc: store tx and conn in TransactionResource
+}
+#+end_src
+
+** Pros of RwLock + write_owned:
+
+- Temporarily "check out" the resource for exclusive ops (move it out, so you can hand it to a transaction).
+- Allows shared access for concurrent queries.
+- Avoids some lifetime issues: as soon as you move the =Connection= out, the rest of your code can't see or use it until you put it back.
+
+** Cons:
+
+- Slightly more complex than Mutex.
+- If you /never/ need concurrent reading, a plain Mutex is simpler.
+- Always remember: Using =Option<Connection>= and taking out/moving back can be error-prone if not carefully managed.
+
+** Summary Table
+
+|                | Mutex                     | RwLock (write_owned)         |
+|----------------|--------------------------|-------------------------------|
+| Concurrency    | Only one at a time       | Many readers, one writer     |
+| Move values    | Easy (=.lock().await=)   | Easy with =.write_owned().await= |
+| For your case  | Adequate                 | Slightly better if want queries+txn |
+
+---
+
+** *Bottom line*
+
+- *Yes, =RwLock= with =.write_owned()= is perfectly good for async database connections.*
+- It especially shines if you want to support concurrent queries, while "taking out" the connection for a transaction.
+- Both are appropriate; pick RwLock if you ever want shared access. Pick Mutex for simplicity if all access is exclusive anyway.
+
+---
+*TL;DR:*  
+*Yes, use =tokio::RwLock= with =.write_owned()= if you want shared query and exclusive transaction semantics.*  
+If you only ever access exclusively, =Mutex= is fine.
+
+* Is cloning the inner conn in conn_resource help? How would I implement this then?
+
+**Short answer:*  
+/Cloning/ the inner =Connection= from your =conn_resource= is /NOT/ a correct or helpful solution for implementing transactions. Here’s why, and how you should do it instead.
+
+---
+
+** Why not clone the connection?
+
+- *Most async DB connection objects* (like =turso::Connection= and most SQL libraries) are not cheaply/meaningfully clonable—they usually represent a TCP socket or a session state.
+- Cloning them would create a /separate/ connection to the database (if allowed at all), not a "handle" to the same ongoing transaction/session.
+- A transaction (=Transaction<'a>=) must be tied to its specific connection instance and its borrow/lifetime.
+
+** The correct way
+
+You /must/ move or temporarily take the single logical connection out of the resource when running a transaction. After the transaction is over, you put it back, ensuring nobody can access the connection while the transaction exists.
+
+---
+
+*** Step-by-step pattern:
+
+*1. Wrap your connection in an Option for ownership transfer:*
+
+#+begin_src rust
+pub struct ConnectionResource(pub tokio::sync::RwLock<Option<Connection>>);
+#+end_src
+
+*2. When executing queries (not in a transaction):*
+
+#+begin_src rust
+async fn query(conn_resource: &ResourceArc<ConnectionResource>) -> ... {
+    let read_guard = conn_resource.0.read().await;
+    let conn = read_guard.as_ref().expect("Connection missing");
+    conn.query(...).await;
+}
+#+end_src
+
+*3. When starting a transaction (exclusive, move the connection out):*
+
+#+begin_src rust
+async fn begin_transaction(conn_resource: ResourceArc<ConnectionResource>) -> TransactionResource {
+    let mut write_guard = conn_resource.0.write().await;
+    let conn = write_guard
+        .take()
+        .expect("Connection already checked out for transaction");
+    let tx = conn.transaction().await.expect("Failed to begin transaction");
+    TransactionResource { conn: Some(conn), tx: Some(tx), conn_resource }
+}
+#+end_src
+
+- Here, =tx= borrows from =conn=, and both are held in the =TransactionResource=, which also keeps a handle to the original resource for restoration.
+
+*4. When ending the transaction (commit/rollback):*
+
+#+begin_src rust
+impl TransactionResource {
+    async fn commit(mut self) {
+        let tx = self.tx.take().expect("Already committed/rolled back");
+        tx.commit().await.expect("Commit failed");
+        // put the connection back
+        let mut write_guard = self.conn_resource.0.write().await;
+        write_guard.replace(self.conn.take().unwrap());
+    }
+
+    async fn rollback(mut self) {
+        let tx = self.tx.take().expect("Already committed/rolled back");
+        tx.rollback().await.expect("Rollback failed");
+        let mut write_guard = self.conn_resource.0.write().await;
+        write_guard.replace(self.conn.take().unwrap());
+    }
+}
+#+end_src
+
+---
+
+*** *Summary*
+
+- *Don’t clone the connection*. Only ever have one logical instance "checked out" at a time.
+- Remove it from the resource when starting a transaction, and restore it when done.
+- This matches the Rust borrow checker model and is safe for both Rust and BEAM resource management.
+- This way, you never risk lifetime errors or two things trying to use the same connection concurrently.
+
+---
+
+*If you’d like a more complete/idiomatic code snippet, let me know!*
+
+* In the snippent you've given for beginning a transaction, won't trying to move conn into TransactionResource fail because tx already borrows it?
+
+Great eye!  
+You’ve spotted the classic “self-referential struct” problem in Rust. *You cannot store a =Transaction<'_>= (which borrows from =conn=) and the =conn= itself inside the same (non-pinned, non-unsafe) Rust struct.*
+
+Let’s clarify what is and isn’t possible.
+
+---
+
+** Why the Example Fails
+
+This pattern fails:
+#+begin_src rust
+struct TransactionResource {
+    conn: Connection,
+    tx: Transaction<'_>, // borrows from conn!
+}
+// ... won't compile -- tx cannot outlive conn, but they're in the same struct!
+#+end_src
+When you do:
+#+begin_src rust
+let tx = conn.transaction().await?;
+let tr = TransactionResource { conn, tx }; // error!
+#+end_src
+Because you cannot move =conn= after creating =tx=, which references it. Rust will rightfully forbid this, because it cannot guarantee struct field lifetimes independently.
+
+---
+
+** How To Handle This
+
+*** 1. Do Not Store Both Directly Together (without Pinning/unsafe)
+
+You *can’t* safely put both in the same struct—unless you use more advanced techniques, and even those are tricky and error-prone.
+
+*** 2. Make Connection Unavailable While Transaction Exists
+
+Instead, you should “move” the =Connection= out of any shared resource holder to temporary /exclusivity/, and only interact through the live =Transaction=. For resource management, do any of the following:
+
+**** Option A: Store Only the Transaction, Drop the Connection
+
+- Only the =Transaction<'a>= lives in the struct.
+- The connection is “moved out” and “forgotten” temporarily, only accessible /through/ the transaction.
+- When you commit/rollback, you “finish” the transaction and use =.finish()= or similar to get the connection /back/ (if the API supports this), then move it back to your resource holder.
+
+*Benefits*: No self-references.  
+*Downside*: You have to re-establish connection control at the end.
+
+**** Option B: Use Pin+Unsafe (Not recommended for most NIFs)
+
+There are crates like [ouroboros](https://docs.rs/ouroboros/) to create self-referential structs in Rust—this is advanced and not idiomatic for most FFI situations.
+
+**** Option C: Treat Transaction as the Temporary "Checked-out" Resource
+
+- Move the connection out of its container, create the transaction, store the transaction only (plus the resource where it'll go back).
+- When transaction is finished, drop it and put the connection back.
+
+*Example Pattern:*
+
+#+begin_src rust
+pub struct TransactionResource {
+    tx: Option<Transaction<'static>>, // see note, usually must use unsafe...
+    conn_resource: ResourceArc<ConnectionResource>,
+    // optionally: also store the conn in Option (ugly but works for some APIs)
+}
+
+// In begin_transaction NIF (pseudo-code)
+let conn = write_guard.take().unwrap(); // move the connection out!
+let tx = unsafe { std::mem::transmute::<Transaction<'_>, Transaction<'static>>(conn.transaction().await? )};
+// store tx, conn_resource in TransactionResource
+#+end_src
+But /transmuting the lifetime to ='static= is only sound if/ you guarantee you never use the connection except via this resource, and you put it back before dropping the transaction.
+
+**** Option D: Structure your API so BEAM cannot access the connection while a transaction is in progress
+
+Do not allow both a "connection resource" and a "transaction resource" at the same time for the same DB session.
+
+---
+
+** Summary/Best Practice
+
+- You cannot store both a =conn= and a =tx= borrowing from it in a normal Rust struct.
+- Instead, move the connection out, create the transaction, and only store/manipulate the transaction (and the means to put the connection back when done).  
+- /Optionally/, use unsafe to extend the lifetime (=std::mem::transmute=) if your resource boundaries absolutely guarantee safety—but document and review this carefully.
+- Libraries like =sqlx= and =tokio-postgres= design their APIs so this pattern is enforced.
+
+---
+
+*TL;DR:*  
+No, you cannot “just” move =conn= into =TransactionResource= after creating a borrowing =tx=.  
+You must design so only one or the other is "live" at a time, or use advanced Rust techniques (usually unnecessary and error-prone for NIFs).
+
+Let me know if you want to see a code pattern for how this would look with just the transaction and a way to put the connection back!
+
+* Again, in Option A, "forgetting" conn is not possible since tx has the same lifetime as conn
+
+**Fantastic observation, and you are completely correct.*  
+You cannot “forget” =conn= as long as =tx: Transaction<'a>= borrows it, and you cannot put only =tx= in your struct unless the reference to =conn= also exists for as long as =tx= exists. Therefore:
+
+- You *cannot* separate =conn= and =tx= and only keep the transaction handle, because the transaction’s lifetime is defined by (and borrows from) the connection’s existence.
+- You *cannot* store both as peers in a struct, because Rust does not allow stable self-referential structs.
+- You *can* /temporarily/ keep both alive in the /same/ stack frame (scope), but not across a resource boundary or struct, unless advanced self-reference patterns are used.
+
+** What do you do instead?
+*The only Rust-safe ways are:*
+
+*** 1. "Transaction as Session": One at a Time
+- Only ever expose either the connection /or/ the transaction, never both.
+- When a transaction is started, the connection is consumed and stored (not accessible elsewhere).
+- The transaction exists for as long as you need.
+- When you commit/rollback, you finish the transaction and retrieve (move) the connection back.
+
+This means your resource could look like this (pseudocode):
+
+#+begin_src rust
+enum DbSession {
+    Connection(Connection),
+    Transaction(Transaction<'a>),  // Can't do this directly across struct boundaries!
+}
+#+end_src
+
+But you can't use this across a resource boundary due to the lifetime.
+
+*** 2. Use Unsafe or Pinning (rare in FFI, advanced)
+- If you /must/ implement this as a struct that both owns the connection and transaction, you’ll need to use crates like [ouroboros](https://crates.io/crates/ouroboros) or =pin_project= for proper self-referential structs (advanced!).
+- Or you can (safely under some conditions, with extreme care) use =std::mem::transmute= for lifetime erasure, /but only if you absolutely guarantee the transaction dies before the connection is freed/. This is generally not recommended unless you’re 100% confident about lifetime rules in your resource flow.
+
+*** 3. Practical, safe NIF pattern
+*Avoid keeping an open transaction as a resource.* Instead:
+- Run a sequence (transaction) of queries inside a single NIF call (the "transaction callback" or "do-atomic").
+- The NIF, on the Rust side, starts a transaction, runs all commands, commits, and returns.
+- This avoids all resource/lifetime ownership problems, but means multistep transactions handled by Elixir/BEAM directly are not possible.
+
+---
+
+*** *Practical Options for Turso NIF:*
+
+**** A) Use atomic transaction API
+Expose only a single Elixir NIF call that runs a closure of statements within the transaction lifetime, so all lifetimes are in one Rust stack frame.
+
+**** B) Use =Arc<Mutex<Option<Connection>>>= and move connection ownership
+When transaction starts:
+- Lock the mutex & take ownership of the connection (=take=).
+- Create the transaction.
+- Store the connection /and/ transaction in fields of your resource *(see note below! This won’t work with a normal struct due to borrowing!)*.
+
+/But you cannot store both in a struct without advanced patterns, as you noted./
+
+**** C) Use unsafe
+Temporarily, you can use
+
+#+begin_src rust
+let tx: Transaction<'_> = conn.transaction().await?;
+let tx_static: Transaction<'static> = std::mem::transmute(tx);
+// Now TransactionResource holds tx_static and the connection (which is safe *IF* tx is dropped before conn).
+#+end_src
+
+*But this is not recommended unless you're absolutely certain about ownership and drop order.*
+
+---
+
+** *In summary:*
+- /You are right/: You cannot just "forget" the connection and keep the transaction handle.
+- /The only truly safe/idiomatic Rust option/ is to keep scopes aligned (transaction and connection must live and die together), or use all-in-one, atomic transaction APIs.
+- /All resource-exposing strategies/ that involve a transaction crossing NIF boundaries must use unsafe hacks or advanced self-referential struct patterns.
+
+---
+
+*** *Bottom line*
+- *Do not try to separate the transaction from the connection.*
+- *Use atomic-in-Rust transaction scopes,* or, if you must, use =std::mem::transmute= for transaction lifetimes /with full awareness of the risks and safe drop ordering/.
+- *The Rust type system is protecting you from unsound BEAM resource patterns here.*
+
+---
+
+*Let me know if you want a skeleton of how to do a per-call, atomic transaction NIF.*
+
+* Going Forward
+- You cannot do atomic operations: "Elixir closures" can't be run from Rust.
+- Advanced patterns may not work with Rustler
+- Unsafe can be dangerous
+
+  What are the things to keep in mind with unsafe? How would I implement this with limited unsafe calls?
+
+You’ve summarized the situation perfectly. Given the constraints of Rustler/BEAM, and the nature of Turso's (or any async SQL) =Transaction<'conn>= borrowing, *the only way to implement a multi-step transaction that is "resource-like" for the BEAM is to use some carefully constrained =unsafe= code on the Rust side to extend lifetimes*. Here’s what you should keep in mind and a pattern that minimizes risk.
+
+---
+
+** 1. What to Keep In Mind with =unsafe=
+
+- *The =unsafe= here is about "fooling the Rust type system" regarding lifetimes.*
+  - You use =std::mem::transmute= (or similar) to convert =Transaction<'_>= into =Transaction<'static>=, /but/ you absolutely must enforce that the transaction is dropped before the connection is reused or dropped.
+- If you break this, you get *use-after-free* or *double drop* bugs. These are usually "soundness" (segfaults or silent corruption) errors.
+- *No other part of your code may access the Connection while a transaction is alive.*
+- You must *never return / move the connection back to BEAM* until after the transaction is finished and dropped.
+- *Never expose access to both connection and transaction at the same time* (enforce this in your design).
+
+*** How to minimize risk:
+
+- Put the =unsafe= block in as small and visible a place as possible.
+- Assert at runtime (with =debug_assert!= or panics) that you never break the above invariant.
+- Document the invariants you are relying on.
+- Keep the lifetime of the transaction resource as short as necessary.
+
+---
+
+** 2. Reference Pattern ("Limited Unsafe" Transaction Resource)
+
+Let's show a full pattern using =tokio::RwLock<Option<Connection>>=.
+
+*** Setup: Resource types
+
+#+begin_src rust
+use rustler::{ResourceArc, NifStruct};
+use tokio::sync::RwLock;
+use turso::{Connection, Transaction};
+
+pub struct ConnectionResource(pub RwLock<Option<Connection>>);
+
+pub struct TransactionResource {
+    pub tx: Option<Transaction<'static>>, // unsafe transmute, see below
+    conn_resource: ResourceArc<ConnectionResource>,
+}
+#+end_src
+
+*** Begin transaction (NIF)
+
+#+begin_src rust
+#[rustler::nif]
+async fn conn_transaction(conn_resource: ResourceArc<ConnectionResource>) -> ResourceArc<TransactionResource> {
+    // Take the connection out
+    let mut guard = conn_resource.0.write().await;
+    let conn = guard.take().expect("Connection already checked out!");
+
+    // Start transaction - lifetime is tied to this Conn, but we need to hand it to BEAM
+    let tx = conn.transaction().await.expect("Failed to begin transaction!");
+
+    // UNsafe: erase the lifetime
+    let tx_static: Transaction<'static> = unsafe { std::mem::transmute(tx) };
+
+    // Store BOTH the transaction and the conn resource (for restoration later)
+    ResourceArc::new(TransactionResource {
+        tx: Some(tx_static),
+        conn_resource,
+    })
+}
+#+end_src
+
+*** Execute in transaction
+
+#+begin_src rust
+#[rustler::nif]
+async fn transaction_query(tx_resource: ResourceArc<TransactionResource>, ...) {
+    let tx = tx_resource.tx.as_ref().expect("Transaction finished");
+    // do stuff with tx
+}
+#+end_src
+
+*** Commit/rollback transaction (NIF)
+
+#+begin_src rust
+#[rustler::nif]
+async fn transaction_commit(tx_resource: ResourceArc<TransactionResource>) {
+    let mut tx_resource = Arc::get_mut(&mut tx_resource).unwrap(); // or get exclusive
+    let tx = tx_resource.tx.take().expect("Already committed");
+    // Drop order is critical: tx must go out of scope BEFORE we put the conn back!
+    let conn = tx.commit().await.expect("Commit failed");
+    // Now put Connection back into ConnectionResource for reuse
+    let mut guard = tx_resource.conn_resource.0.write().await;
+    debug_assert!(guard.is_none());
+    *guard = Some(conn);
+}
+#+end_src
+- Ditto for rollback.
+
+---
+
+** 3. Invariants and Testing
+
+- *Enforce at runtime*: Only one of Connection or Transaction may be "active" at a time for each logical session.
+- *NEVER* expose the inner Connection for anything while the Transaction exists.
+- *Restore the connection only after the transaction is destroyed or committed/rolled back.*
+
+** 4. Limit Unsafe Scope
+
+- The /only/ =unsafe= here is the =std::mem::transmute= on the transaction lifetime.
+- Add comments explaining why it is (locally) sound.
+- Add runtime checks to panic if the resource is misused.
+
+---
+
+*Summary Table*
+
+|           | What                | Why                |
+|-----------|---------------------|--------------------|
+| =unsafe=  | Only for transmuting Transaction's lifetime | Needed to pass through BEAM resource boundary |
+| Synchronization | RwLock<Option<Connection>> | Enforces exclusive access during txn |
+| Commit/Rollback | Returns Connection to resource | Never available during txn |
+| Invariants | Txn lives no longer than Conn | Enforced by pattern and panic/asserts |
+
+---
+
+*In real-world DB drivers this is how it's done when FFI/resource models require bending lifetime rules.*  
+Just be extremely careful, concentrate all =unsafe=, and /never/ access/reuse the connection until the txn is fully gone.
+
+Let me know if you want a more complete skeleton or further guidance!
+
+* Any alternatives to unsafe?

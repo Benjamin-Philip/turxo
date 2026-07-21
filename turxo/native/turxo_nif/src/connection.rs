@@ -1,9 +1,13 @@
-use crate::statement::{params_atom_to_key, Params, StatementResource, Value};
+use crate::statement::{Params, StatementResource, Value, params_atom_to_key};
 use crate::transaction::TransactionResource;
 use crate::utils::{runtime, send_result, setup_async_env};
-use rustler::{Env, Reference, Resource, ResourceArc};
-use tokio::sync::{Mutex, RwLock};
-use turso::{Connection, Error as TursoError, Rows};
+
+use rustler::{Env, OwnedEnv, Reference, Resource, ResourceArc};
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
+use turso::{Connection, Error as TursoError, IntoParams, Rows, Statement};
+
+// Resource and Traits
 
 pub struct ConnectionResource(pub RwLock<Connection>);
 
@@ -11,6 +15,46 @@ pub struct ConnectionResource(pub RwLock<Connection>);
 impl Resource for ConnectionResource {
     fn destructor(self, _env: Env<'_>) {}
 }
+
+// Traits and generic functions
+
+// pub trait Executable {
+//     async fn execute(&self, sql: String, params: impl IntoParams) -> Result<u64, TursoError>;
+//     async fn query(&self, sql: String, params: impl IntoParams) -> Result<Rows, TursoError>;
+//     async fn prepare(&self, sql: String) -> Result<Statement, TursoError>;
+// }
+
+// impl Executable for RwLockReadGuard<'_, Connection> {
+//     async fn execute(&self, sql: String, params: impl IntoParams) -> Result<u64, TursoError> {
+//         Connection::execute(&self, sql, params).await
+//     }
+
+//     async fn query(&self, sql: String, params: impl IntoParams) -> Result<Rows, TursoError> {
+//         Connection::query(&self, sql, params).await
+//     }
+
+//     async fn prepare(&self, sql: String) -> Result<Statement, TursoError> {
+//         Connection::prepare(&self, sql).await
+//     }
+// }
+
+// pub async fn generic_execute<T: Executable>(
+//     executable: T,
+//     sql: String,
+//     params: Params,
+//     owned_env: &OwnedEnv,
+// ) -> Result<u64, String> {
+//     let result = match params {
+//         Params::Positional(p) => executable.execute(sql, p).await,
+//         Params::Named(n) => {
+//             executable
+//                 .execute(sql, params_atom_to_key(&owned_env, n))
+//                 .await
+//         }
+//     };
+
+//     result.map_err(|e| e.to_string())
+// }
 
 // Connection Execution
 
@@ -31,6 +75,9 @@ fn conn_execute<'a>(
         };
 
         let result = result.map_err(|e| e.to_string());
+
+        // let result =
+        //     generic_execute::<RwLockReadGuard<'_, Connection>>(conn, sql, params, &owned_env).await;
         send_result::<u64>(result, pid, owned_env, owned_ref);
     });
 
@@ -124,12 +171,16 @@ fn conn_transaction<'a>(
     let (erl_ref, pid, owned_env, owned_ref) = setup_async_env(env);
 
     runtime().spawn(async move {
-        let mut conn = conn_resource.0.try_write().unwrap();
-
-        let tx_res = conn.transaction().await;
+        let conn_res = conn_resource.0.read().await;
+        // let mut conn_arc = Arc::new(conn_res.clone());
+        let mut tx_resource = TransactionResource {
+            conn: conn_res.clone(),
+            tx: None,
+        };
+        let tx_res = tx_resource.conn.transaction().await;
 
         let result = match tx_res {
-            Ok(tx) => Ok(ResourceArc::new(TransactionResource { tx })),
+            Ok(tx) => Ok(ResourceArc::new(tx)),
             Err(e) => Err(e.to_string()),
         };
 

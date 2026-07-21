@@ -6,8 +6,8 @@ defmodule Turxo.NIF do
   conn = [
     conn_execute: [:conn, :sql, :params],
     conn_query: [:conn, :sql, :params],
-    conn_prepare: [:conn, :sql, :cached?],
-    conn_transaction: [:conn]
+    conn_prepare: [:conn, :sql, :cached?]
+    # conn_transaction: [:conn]
   ]
 
   stmt = [stmt_execute: [:stmt, :params], stmt_query: [:stmt, :params]]
