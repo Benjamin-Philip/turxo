@@ -8,11 +8,15 @@ check: elixir rust nix
 ##########
 
 .PHONY: elixir
-elixir: elixir-check elixir-formatted  elixir-test
+elixir: elixir-check elixir-docs elixir-formatted  elixir-test
 
 .PHONY: elixir-check
 elixir-check:
 	mix compile --warnings-as-errors
+
+.PHONY: elixir-docs
+elixir-docs:
+	mix docs
 
 .PHONY: elixir-formatted
 elixir-formatted:
