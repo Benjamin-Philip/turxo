@@ -13,7 +13,7 @@ jobs:
     name: Check Flake
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: DeterminateSystems/nix-installer-action@main
       - run: make nix-check
 
@@ -21,7 +21,7 @@ jobs:
     name: Check Formatted
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: nicknovitski/nix-develop@v1
       - run: make nix-formatted
@@ -30,6 +30,6 @@ jobs:
     name: Check devShell
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: DeterminateSystems/nix-installer-action@main
       - run: make nix-devShell

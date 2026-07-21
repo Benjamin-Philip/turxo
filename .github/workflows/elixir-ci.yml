@@ -13,7 +13,7 @@ jobs:
     name: Compiles without warning
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: nicknovitski/nix-develop@v1
       - run: make elixir-setup
@@ -23,7 +23,7 @@ jobs:
     name: Check Formatted
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: nicknovitski/nix-develop@v1
       - run: make elixir-setup
@@ -33,7 +33,7 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: nicknovitski/nix-develop@v1
       - run: make elixir-setup
