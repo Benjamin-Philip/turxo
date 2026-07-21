@@ -1,30 +1,30 @@
 # Makefile for helpers for CI and development
 
 .PHONY: check
-check: elixir-turxo elixir-ecto_turxo rust nix
+check: elixir rust nix
 
 ##########
 # Elixir #
 ##########
 
-.PHONY: elixir-%
-elixir-%: elixir-%-check elixir-%-formatted  elixir-%-test  
+.PHONY: elixir
+elixir: elixir-check elixir-formatted  elixir-test
 
-.PHONY: elixir-%-check
-elixir-%-check:
-	cd $* && mix compile --warnings-as-errors
+.PHONY: elixir-check
+elixir-check:
+	mix compile --warnings-as-errors
 
-.PHONY: elixir-%-formatted
-elixir-%-formatted:
-	cd $* && mix format --check-formatted
+.PHONY: elixir-formatted
+elixir-formatted:
+	mix format --check-formatted
 
-.PHONY: elixir-%-test
-elixir-%-test:
-	cd $* && mix test
+.PHONY: elixir-test
+elixir-test:
+	mix test
 
-.PHONY: elixir-%-setup
-elixir-%-setup: 
-	cd $* && mix deps.get
+.PHONY: elixir-setup
+elixir-setup:
+	mix deps.get
 
 ########
 # Rust #
@@ -33,19 +33,17 @@ elixir-%-setup:
 .PHONY: rust
 rust: rust-check rust-formatted rust-lint
 
-NATIVE := turxo/native/turxo_nif/
-
 .PHONY: rust-check
 rust-check:
-	cd $(NATIVE) && cargo check
+	cargo check
 
 .PHONY: rust-formatted
 rust-formatted:
-	cd $(NATIVE) && cargo fmt --check
+	cargo fmt --check
 
 .PHONY: rust-lint
 rust-lint:
-	cd $(NATIVE) && cargo clippy
+	cargo clippy
 
 #######
 # Nix #
