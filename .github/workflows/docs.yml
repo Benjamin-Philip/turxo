@@ -1,0 +1,51 @@
+name: Docs
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Docs
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: nicknovitski/nix-develop@v1
+      - run: make elixir-setup
+      - run: make elixir-docs
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          name: docs-${{ github.sha }}
+          path: 'doc'
+
+  deploy:
+    name: Deploy to GitHub Pages
+    if: github.ref_name == 'main' && github.event_name == 'push'
+    needs: build
+
+    # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    # Allow only one concurrent deployment
+    concurrency:
+      group: "pages"
+      cancel-in-progress: true
+
+    runs-on: ubuntu-latest
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
+        with:
+           artifact_name: docs-${{ github.sha }}
