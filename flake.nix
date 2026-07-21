@@ -46,7 +46,8 @@
           erlang.elixir
           rustPkg
           nixfmt
-        ] ++ optionals;
+        ]
+        ++ optionals;
 
       in
       {
