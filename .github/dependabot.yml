@@ -27,3 +27,12 @@ updates:
     open-pull-requests-limit: 10
     cooldown:
       default-days: 7
+  - package-ecosystem: "nix"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    commit-message:
+      prefix: "chore: "
+    open-pull-requests-limit: 10
+    cooldown:
+      default-days: 7
