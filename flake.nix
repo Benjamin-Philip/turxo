@@ -46,6 +46,7 @@
           erlang.elixir
           rustPkg
           nixfmt
+          pkgs.git-cliff
         ]
         ++ optionals;
 
