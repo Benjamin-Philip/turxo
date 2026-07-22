@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add MIT License (#18)
 - Add Contributor Covenant Code of Conduct
 - Add changelog (#19)
+- Add hex package metadata
 
 ### Changed
 
@@ -45,6 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Scope ecosystem in Dependabot commits
 - Ignore direnv files
 - Fill out the README
+- Update CHANGELOG for 0.1.0
+
+### Removed
+
+- Remove generated Rustler NIF README
 
 [unreleased]: https://github.com/Benjamin-Philip/turxo/compare/0.1.0..HEAD
 [0.1.0]: https://github.com/Benjamin-Philip/turxo/tree/0.1.0
