@@ -1,6 +1,8 @@
 defmodule Turxo.MixProject do
   use Mix.Project
 
+  @source "https://github.com/Benjamin-Philip/turxo"
+
   def project do
     [
       app: :turxo,
@@ -9,9 +11,11 @@ defmodule Turxo.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       name: "Turxo",
-      source_url: "https://github.com/Benjamin-Philip/turxo",
-      homepage_url: "https://github.com/Benjamin-Philip/turxo",
-      docs: &docs/0
+      description: "Elixir driver for the Turso database",
+      source_url: @source,
+      homepage_url: @source,
+      docs: &docs/0,
+      package: &package/0
     ]
   end
 
@@ -37,6 +41,16 @@ defmodule Turxo.MixProject do
       # {:sibling_app_in_umbrella, in_umbrella: true}
       {:rustler, "~> 0.38.0"},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false, warn_if_outdated: true}
+    ]
+  end
+
+  defp package() do
+    [
+      name: "turxo",
+      files: ~w(lib native priv .formatter.exs mix.exs README.md LICENSE
+          CHANGELOG.md src),
+      licenses: ["MIT"],
+      links: %{"GitHub" => @source}
     ]
   end
 end
