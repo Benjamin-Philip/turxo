@@ -1,12 +1,13 @@
 defmodule Turxo.MixProject do
   use Mix.Project
 
+  @version "0.1.0"
   @source "https://github.com/Benjamin-Philip/turxo"
 
   def project do
     [
       app: :turxo,
-      version: "0.1.0",
+      version: @version,
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -15,14 +16,15 @@ defmodule Turxo.MixProject do
       source_url: @source,
       homepage_url: @source,
       docs: &docs/0,
-      package: &package/0
+      package: package()
     ]
   end
 
   defp docs do
     [
       main: "readme",
-      extras: ["README.md", "CHANGELOG.md", "LICENSE"]
+      extras: ["README.md", "CHANGELOG.md", "LICENSE"],
+      source_ref: "v#{@version}"
     ]
   end
 
@@ -47,10 +49,11 @@ defmodule Turxo.MixProject do
   defp package() do
     [
       name: "turxo",
-      files: ~w(lib native priv .formatter.exs mix.exs README.md LICENSE
-          CHANGELOG.md src),
+      files: ~w(lib native .formatter.exs mix.exs README.md LICENSE
+          CHANGELOG.md),
       licenses: ["MIT"],
-      links: %{"GitHub" => @source}
+      links: %{"GitHub" => @source},
+      maintainers: ["Benjamin Philip"]
     ]
   end
 end
