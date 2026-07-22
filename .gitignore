@@ -29,3 +29,7 @@ turxo-*.tar
 # Rust binary artifacts
 /target/
 /priv/native/*
+
+# Direnv
+.envrc
+.direnv
