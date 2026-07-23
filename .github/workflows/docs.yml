@@ -18,6 +18,7 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
       - uses: nicknovitski/nix-develop@v1
+      - uses: Swatinem/rust-cache@v2
       - run: make elixir-setup
       - run: make elixir-docs
       - uses: actions/upload-pages-artifact@v5

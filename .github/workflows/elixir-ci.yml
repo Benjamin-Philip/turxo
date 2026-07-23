@@ -17,6 +17,7 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
       - uses: nicknovitski/nix-develop@v1
+      - uses: Swatinem/rust-cache@v2
       - run: make elixir-setup
       - run: make elixir-check
 
@@ -28,6 +29,7 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
       - uses: nicknovitski/nix-develop@v1
+      - uses: Swatinem/rust-cache@v2
       - run: make elixir-setup
       - run: make elixir-formatted
 
@@ -39,5 +41,6 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
       - uses: nicknovitski/nix-develop@v1
+      - uses: Swatinem/rust-cache@v2
       - run: make elixir-setup
       - run: make elixir-test
