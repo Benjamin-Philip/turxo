@@ -1,6 +1,6 @@
 use crate::statement::{params_atom_to_key, Params, StatementResource, Value};
-use crate::utils::{runtime, send_result, setup_async_env};
-use rustler::{Env, Reference, Resource, ResourceArc};
+use crate::utils;
+use rustler::{Env, OwnedEnv, Reference, Resource, ResourceArc};
 use tokio::sync::Mutex;
 use turso::{Connection, Error as TursoError, Rows};
 
@@ -22,24 +22,19 @@ fn conn_execute<'a>(
     sql: String,
     params: Params,
 ) -> Reference<'a> {
-    let (erl_ref, pid, owned_env, owned_ref) = setup_async_env(env);
-
-    runtime().spawn(async move {
+    utils::spawn_task_with_result(env, async move {
         let result = match params {
             Params::Positional(p) => conn_resource.conn.execute(sql, p).await,
             Params::Named(n) => {
                 conn_resource
                     .conn
-                    .execute(sql, params_atom_to_key(&owned_env, n))
+                    .execute(sql, params_atom_to_key(&(OwnedEnv::new()), n))
                     .await
             }
         };
 
-        let result = result.map_err(|e| e.to_string());
-        send_result::<u64>(result, pid, owned_env, owned_ref);
-    });
-
-    erl_ref
+        result.map_err(|e| e.to_string())
+    })
 }
 
 // Connection Queries
@@ -51,28 +46,22 @@ fn conn_query<'a>(
     sql: String,
     params: Params,
 ) -> Reference<'a> {
-    let (erl_ref, pid, owned_env, owned_ref) = setup_async_env(env);
-
-    runtime().spawn(async move {
+    utils::spawn_task_with_result(env, async move {
         let rows = match params {
             Params::Positional(p) => conn_resource.conn.query(sql, p).await,
             Params::Named(n) => {
                 conn_resource
                     .conn
-                    .query(sql, params_atom_to_key(&owned_env, n))
+                    .query(sql, params_atom_to_key(&(OwnedEnv::new()), n))
                     .await
             }
         };
 
-        let result = match rows {
+        match rows {
             Ok(rows) => decode_rows(rows).await.map_err(|e| e.to_string()),
             Err(e) => Err(e.to_string()),
-        };
-
-        send_result(result, pid, owned_env, owned_ref);
-    });
-
-    erl_ref
+        }
+    })
 }
 
 pub async fn decode_rows(mut rows: Rows) -> Result<Vec<Vec<Value>>, TursoError> {
@@ -101,22 +90,16 @@ fn conn_prepare<'a>(
     sql: String,
     cached: bool,
 ) -> Reference<'a> {
-    let (erl_ref, pid, owned_env, owned_ref) = setup_async_env(env);
-
-    runtime().spawn(async move {
+    utils::spawn_task_with_result(env, async move {
         let stmt = if cached {
             conn_resource.conn.prepare_cached(sql).await
         } else {
             conn_resource.conn.prepare(sql).await
         };
 
-        let result = match stmt {
+        match stmt {
             Ok(stmt) => Ok(ResourceArc::new(StatementResource(Mutex::new(stmt)))),
             Err(e) => Err(e.to_string()),
-        };
-
-        send_result::<ResourceArc<StatementResource>>(result, pid, owned_env, owned_ref);
-    });
-
-    erl_ref
+        }
+    })
 }

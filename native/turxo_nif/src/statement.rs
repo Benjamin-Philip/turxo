@@ -1,5 +1,5 @@
 use crate::connection::decode_rows;
-use crate::utils::{runtime, send_result, setup_async_env};
+use crate::utils;
 use rustler::{Atom, Env, NifUntaggedEnum, OwnedEnv, Reference, Resource, ResourceArc};
 use tokio::sync::Mutex;
 use turso::{Error as TursoError, IntoValue, Statement, Value as TursoValue};
@@ -83,21 +83,19 @@ fn stmt_execute<'a>(
     stmt_resource: ResourceArc<StatementResource>,
     params: Params,
 ) -> Reference<'a> {
-    let (erl_ref, pid, owned_env, owned_ref) = setup_async_env(env);
-
-    runtime().spawn(async move {
+    utils::spawn_task_with_result(env, async move {
         let mut stmt = stmt_resource.0.try_lock().unwrap();
 
         let result = match params {
             Params::Positional(p) => stmt.execute(p).await,
-            Params::Named(n) => stmt.execute(params_atom_to_key(&owned_env, n)).await,
+            Params::Named(n) => {
+                stmt.execute(params_atom_to_key(&(OwnedEnv::new()), n))
+                    .await
+            }
         };
 
-        let result = result.map_err(|e| e.to_string());
-        send_result::<u64>(result, pid, owned_env, owned_ref);
-    });
-
-    erl_ref
+        result.map_err(|e| e.to_string())
+    })
 }
 
 #[rustler::nif]
@@ -106,23 +104,17 @@ fn stmt_query<'a>(
     stmt_resource: ResourceArc<StatementResource>,
     params: Params,
 ) -> Reference<'a> {
-    let (erl_ref, pid, owned_env, owned_ref) = setup_async_env(env);
-
-    runtime().spawn(async move {
+    utils::spawn_task_with_result(env, async move {
         let mut stmt = stmt_resource.0.try_lock().unwrap();
 
         let rows = match params {
             Params::Positional(p) => stmt.query(p).await,
-            Params::Named(n) => stmt.query(params_atom_to_key(&owned_env, n)).await,
+            Params::Named(n) => stmt.query(params_atom_to_key(&(OwnedEnv::new()), n)).await,
         };
 
-        let result = match rows {
+        match rows {
             Ok(rows) => decode_rows(rows).await.map_err(|e| e.to_string()),
             Err(e) => Err(e.to_string()),
-        };
-
-        send_result(result, pid, owned_env, owned_ref);
-    });
-
-    erl_ref
+        }
+    })
 }
