@@ -1,4 +1,4 @@
-use crate::statement::{Params, StatementResource, Value, params_atom_to_key};
+use crate::statement::{params_atom_to_key, Params, StatementResource, Value};
 use crate::utils;
 use rustler::{Env, OwnedEnv, Reference, Resource, ResourceArc};
 use tokio::sync::Mutex;
