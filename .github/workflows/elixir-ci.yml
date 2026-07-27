@@ -8,6 +8,12 @@ permissions:
   contents: read
   id-token: write
 
+env:
+  ELIXIR_CACHE_PATH: |
+    deps
+    .nix_hex
+    .nix_mix
+
 jobs:
   check:
     name: Compiles without warning
@@ -15,7 +21,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
       - uses: nicknovitski/nix-develop@v1
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.ELIXIR_CACHE_PATH }}
+          key: check-elixir-cache
       - run: make elixir-setup
       - run: make elixir-check
 
@@ -25,7 +37,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
       - uses: nicknovitski/nix-develop@v1
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.ELIXIR_CACHE_PATH }}
+          key: formatted-elixir-cache
       - run: make elixir-setup
       - run: make elixir-formatted
 
@@ -35,6 +53,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
       - uses: nicknovitski/nix-develop@v1
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.ELIXIR_CACHE_PATH }}
+          key: test-elixir-cache
       - run: make elixir-setup
       - run: make elixir-test
