@@ -8,6 +8,12 @@ permissions:
   contents: read
   id-token: write
 
+env:
+  elixir-cache-path: |
+    deps
+    .nix_hex
+    .nix_mix
+
 jobs:
   check:
     name: Compiles without warning
@@ -19,10 +25,8 @@ jobs:
       - uses: nicknovitski/nix-develop@v1
       - uses: Swatinem/rust-cache@v2
       - uses: actions/cache@v6
-        path: |
-          deps
-          .nix_hex
-          .nix_mix
+        with:
+          path: ${{ env.elixir-cache-path }}
       - run: make elixir-setup
       - run: make elixir-check
 
@@ -36,10 +40,8 @@ jobs:
       - uses: nicknovitski/nix-develop@v1
       - uses: Swatinem/rust-cache@v2
       - uses: actions/cache@v6
-        path: |
-          deps
-          .nix_hex
-          .nix_mix
+        with:
+          path: ${{ env.elixir-cache-path }}
       - run: make elixir-setup
       - run: make elixir-formatted
 
@@ -53,9 +55,7 @@ jobs:
       - uses: nicknovitski/nix-develop@v1
       - uses: Swatinem/rust-cache@v2
       - uses: actions/cache@v6
-        path: |
-          deps
-          .nix_hex
-          .nix_mix
+        with:
+          path: ${{ env.elixir-cache-path }}
       - run: make elixir-setup
       - run: make elixir-test
