@@ -8,8 +8,8 @@ permissions:
   contents: read
   id-token: write
 
-var:
-  elixir-cache-path: |
+env:
+  ELIXIR_CACHE_PATH: |
     deps
     .nix_hex
     .nix_mix
@@ -26,7 +26,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: actions/cache@v6
         with:
-          path: ${{ var.elixir-cache-path }}
+          path: ${{ env.ELIXIR_CACHE_PATH }}
           key: check-elixir-cache
       - run: make elixir-setup
       - run: make elixir-check
@@ -42,7 +42,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: actions/cache@v6
         with:
-          path: ${{ var.elixir-cache-path }}
+          path: ${{ env.ELIXIR_CACHE_PATH }}
           key: formatted-elixir-cache
       - run: make elixir-setup
       - run: make elixir-formatted
@@ -58,7 +58,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: actions/cache@v6
         with:
-          path: ${{ var.elixir-cache-path }}
+          path: ${{ env.ELIXIR_CACHE_PATH }}
           key: test-elixir-cache
       - run: make elixir-setup
       - run: make elixir-test
