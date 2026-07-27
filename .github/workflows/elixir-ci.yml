@@ -18,6 +18,11 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
       - uses: nicknovitski/nix-develop@v1
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v6
+        path: |
+          deps
+          .nix_hex
+          .nix_mix
       - run: make elixir-setup
       - run: make elixir-check
 
@@ -30,6 +35,11 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
       - uses: nicknovitski/nix-develop@v1
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v6
+        path: |
+          deps
+          .nix_hex
+          .nix_mix
       - run: make elixir-setup
       - run: make elixir-formatted
 
@@ -42,5 +52,10 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
       - uses: nicknovitski/nix-develop@v1
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v6
+        path: |
+          deps
+          .nix_hex
+          .nix_mix
       - run: make elixir-setup
       - run: make elixir-test
