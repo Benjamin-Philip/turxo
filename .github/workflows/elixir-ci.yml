@@ -27,6 +27,7 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: ${{ env.elixir-cache-path }}
+          key: check-elixir-cache
       - run: make elixir-setup
       - run: make elixir-check
 
@@ -42,6 +43,7 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: ${{ env.elixir-cache-path }}
+          key: formatted-elixir-cache
       - run: make elixir-setup
       - run: make elixir-formatted
 
@@ -57,5 +59,6 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: ${{ env.elixir-cache-path }}
+          key: test-elixir-cache
       - run: make elixir-setup
       - run: make elixir-test

@@ -25,6 +25,7 @@ jobs:
             deps
             .nix_hex
             .nix_mix
+          key: docs-elixir-cache
       - run: make elixir-setup
       - run: make elixir-docs
       - uses: actions/upload-pages-artifact@v5
